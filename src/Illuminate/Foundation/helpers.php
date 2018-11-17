@@ -19,6 +19,7 @@ use Illuminate\Contracts\View\Factory as ViewFactory;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Contracts\Cookie\Factory as CookieFactory;
 use Symfony\Component\Debug\Exception\FatalThrowableError;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Illuminate\Database\Eloquent\Factory as EloquentFactory;
 use Illuminate\Contracts\Validation\Factory as ValidationFactory;
 use Illuminate\Contracts\Broadcasting\Factory as BroadcastFactory;
@@ -663,6 +664,26 @@ if (! function_exists('policy')) {
     function policy($class)
     {
         return app(Gate::class)->getPolicyFor($class);
+    }
+}
+
+if (! function_exists('previous_route')) {
+    /**
+     * Generate a route name for the previous request.
+     *
+     * @return string|null
+     */
+    function previous_route()
+    {
+        $previousRequest = app('request')->create(app('url')->previous());
+
+        try {
+            $routeName = app('router')->getRoutes()->match($previousRequest)->getName();
+        } catch (NotFoundHttpException $exception) {
+            return null;
+        }
+
+        return $routeName;
     }
 }
 
