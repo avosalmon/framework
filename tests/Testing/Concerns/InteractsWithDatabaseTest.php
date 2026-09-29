@@ -3,11 +3,12 @@
 namespace Illuminate\Tests\Testing\Concerns;
 
 use Illuminate\Database\Connection;
+use Illuminate\Database\ConnectionResolver;
 use Illuminate\Database\Query\Expression;
 use Illuminate\Foundation\Testing\Concerns\InteractsWithDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Facade;
-use Mockery as m;
+use Mockery;
 use PHPUnit\Framework\TestCase;
 
 class InteractsWithDatabaseTest extends TestCase
@@ -16,11 +17,6 @@ class InteractsWithDatabaseTest extends TestCase
     {
         Facade::clearResolvedInstances();
         Facade::setFacadeApplication(null);
-    }
-
-    protected function tearDown(): void
-    {
-        m::close();
     }
 
     public function testCastToJsonSqlite()
@@ -140,7 +136,7 @@ class InteractsWithDatabaseTest extends TestCase
 
     protected function castAsJson($value, $grammar)
     {
-        $connection = m::mock(Connection::class);
+        $connection = Mockery::mock(Connection::class);
         $grammarClass = 'Illuminate\Database\Query\Grammars\\'.$grammar.'Grammar';
         $grammar = new $grammarClass($connection);
 
@@ -154,7 +150,9 @@ class InteractsWithDatabaseTest extends TestCase
             return "'".$value."'";
         });
 
-        DB::shouldReceive('connection')->with(null)->andReturn($connection);
+        $resolver = new ConnectionResolver(['default' => $connection]);
+        $resolver->setDefaultConnection('default');
+        DB::swap($resolver);
 
         $instance = new class
         {

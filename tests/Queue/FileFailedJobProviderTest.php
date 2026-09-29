@@ -4,6 +4,7 @@ namespace Illuminate\Tests\Queue;
 
 use Exception;
 use Illuminate\Queue\Failed\FileFailedJobProvider;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\TestCase;
 
@@ -40,6 +41,8 @@ class FileFailedJobProviderTest extends TestCase
 
     public function testCanRetrieveAllFailedJobs()
     {
+        Carbon::setTestNow(Carbon::now());
+
         [$uuidOne, $exceptionOne] = $this->logFailedJob();
         [$uuidTwo, $exceptionTwo] = $this->logFailedJob();
 
@@ -116,19 +119,51 @@ class FileFailedJobProviderTest extends TestCase
         $this->assertEmpty($failedJobs);
     }
 
+    public function testCanFlushFailedJobsForASingleQueue()
+    {
+        $this->logFailedJob('connection', 'emails');
+        $this->logFailedJob('connection', 'emails');
+        $this->logFailedJob('connection', 'default');
+
+        $this->provider->flush(queue: 'emails');
+
+        $failedJobs = $this->provider->all();
+
+        $this->assertCount(1, $failedJobs);
+        $this->assertSame('default', $failedJobs[0]->queue);
+    }
+
+    public function testCanFlushFailedJobsForASingleQueueByHours()
+    {
+        Carbon::setTestNow($now = Carbon::now());
+
+        $this->logFailedJob('connection', 'emails');
+        $this->logFailedJob('connection', 'default');
+
+        Carbon::setTestNow($now->copy()->addHours(10));
+
+        $this->logFailedJob('connection', 'emails');
+
+        $this->provider->flush(5, 'emails');
+
+        $this->assertCount(2, $this->provider->all());
+        $this->assertSame(1, $this->provider->count(queue: 'emails'));
+        $this->assertSame(1, $this->provider->count(queue: 'default'));
+    }
+
     public function testCanPruneFailedJobs()
     {
         $this->logFailedJob();
         $this->logFailedJob();
 
-        $this->provider->prune(now()->addDay(1));
+        $this->provider->prune(Carbon::now()->addDay());
         $failedJobs = $this->provider->all();
         $this->assertEmpty($failedJobs);
 
         $this->logFailedJob();
         $this->logFailedJob();
 
-        $this->provider->prune(now()->subDay(1));
+        $this->provider->prune(Carbon::now()->subDay());
         $failedJobs = $this->provider->all();
         $this->assertCount(2, $failedJobs);
     }
@@ -138,14 +173,14 @@ class FileFailedJobProviderTest extends TestCase
         $this->logFailedJob();
         $this->logFailedJob();
 
-        $this->provider->prune(now()->addHour(1));
+        $this->provider->prune(Carbon::now()->addHour());
         $failedJobs = $this->provider->all();
         $this->assertEmpty($failedJobs);
 
         $this->logFailedJob();
         $this->logFailedJob();
 
-        $this->provider->prune(now()->subHour(1));
+        $this->provider->prune(Carbon::now()->subHour());
         $failedJobs = $this->provider->all();
         $this->assertCount(2, $failedJobs);
     }
@@ -215,6 +250,9 @@ class FileFailedJobProviderTest extends TestCase
 
         $this->provider->log($connection, $queue, json_encode(['uuid' => (string) $uuid]), $exception);
 
-        return [(string) $uuid, $exception];
+        return [
+            (string) $uuid,
+            $exception,
+        ];
     }
 }

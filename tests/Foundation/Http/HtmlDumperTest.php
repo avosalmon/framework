@@ -139,7 +139,7 @@ class HtmlDumperTest extends TestCase
 
     public function testGetOriginalViewCompiledFile()
     {
-        $compiled = __DIR__.'/../fixtures/fake-compiled-view.php';
+        $compiled = __DIR__.'/../Fixtures/fake-compiled-view.php';
         $original = '/my-work-directory/resources/views/welcome.blade.php';
 
         $dumper = new HtmlDumper(
@@ -155,7 +155,7 @@ class HtmlDumperTest extends TestCase
 
     public function testWhenGetOriginalViewCompiledFileFails()
     {
-        $compiled = __DIR__.'/../fixtures/fake-compiled-view-without-source-map.php';
+        $compiled = __DIR__.'/../Fixtures/fake-compiled-view-without-source-map.php';
         $original = $compiled;
 
         $dumper = new HtmlDumper(
@@ -252,6 +252,17 @@ class HtmlDumperTest extends TestCase
         ))->call($dumper);
         $this->assertSame(
             'vscode://file//my-docker-work-directory/app/my-file:1',
+            $href,
+        );
+
+        // When base path appears elsewhere in the file path
+        $config->set('app.editor', ['name' => 'vscode', 'base_path' => '/my-docker-work-directory']);
+        $href = (fn () => $this->resolveSourceHref(
+            '/my-work-directory/storage/my-work-directory/my-file',
+            10,
+        ))->call($dumper);
+        $this->assertSame(
+            'vscode://file//my-docker-work-directory/storage/my-work-directory/my-file:10',
             $href,
         );
     }

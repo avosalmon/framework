@@ -6,12 +6,12 @@ use Illuminate\Database\Eloquent\Concerns\PreventsCircularRecursion;
 use Mockery;
 use PHPUnit\Framework\TestCase;
 
+require_once __DIR__.'/DatabaseEloquentStrictMorphsTest.php';
+
 class DatabaseConcernsPreventsCircularRecursionTest extends TestCase
 {
     protected function setUp(): void
     {
-        parent::setUp();
-
         PreventsCircularRecursionWithRecursiveMethod::$globalStack = 0;
     }
 
@@ -183,7 +183,7 @@ class DatabaseConcernsPreventsCircularRecursionTest extends TestCase
             fn () => array_merge($mock->attributesToArray(), $mock->relationsToArray()),
             fn () => $mock->attributesToArray(),
         );
-        $this->assertEquals([], $toArray);
+        $this->assertSame([], $toArray);
     }
 }
 

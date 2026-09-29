@@ -16,6 +16,37 @@ class TranslationMessageSelectorTest extends TestCase
         $this->assertEquals($expected, $selector->choose($id, $number, 'en'));
     }
 
+    public function testChooseWithFloatDoesNotTriggerDeprecation()
+    {
+        $selector = new MessageSelector;
+
+        $this->assertSame('many', $selector->choose('{0} zero|{1} one|[2,*] many', 2.75, 'pl'));
+    }
+
+    public function testChoosePluralizesFloats()
+    {
+        $selector = new MessageSelector;
+
+        $this->assertSame('plural', $selector->choose('singular|plural', 0.5, 'en'));
+    }
+
+    public function testChooseUsesAbsoluteValueForPluralRules()
+    {
+        $selector = new MessageSelector;
+
+        $this->assertSame('item', $selector->choose('item|items', -1, 'en'));
+        $this->assertSame('items', $selector->choose('item|items', -2, 'en'));
+
+        $this->assertSame('файл', $selector->choose('файл|файла|файлов', -1, 'ru'));
+        $this->assertSame('файла', $selector->choose('файл|файла|файлов', -2, 'ru'));
+        $this->assertSame('файлов', $selector->choose('файл|файла|файлов', -5, 'ru'));
+        $this->assertSame('файл', $selector->choose('файл|файла|файлов', -21, 'ru'));
+
+        $this->assertSame('minus one', $selector->choose('{-1} minus one|[*,*] other', -1, 'en'));
+        $this->assertSame('items', $selector->choose('item|items', '-3', 'en'));
+        $this->assertSame('items', $selector->choose('item|items', null, 'en'));
+    }
+
     public static function chooseTestData()
     {
         return [
@@ -33,6 +64,7 @@ class TranslationMessageSelectorTest extends TestCase
             ['first', '{9}first|{10}second', 1],
             ['', '{0}|{1}second', 0],
             ['', '{0}first|{1}', 1],
+            ['second', '{1.3}first|{2.3}second', .3],
             ['first', '{1.3}first|{2.3}second', 1.3],
             ['second', '{1.3}first|{2.3}second', 2.3],
             ['first
@@ -57,12 +89,30 @@ class TranslationMessageSelectorTest extends TestCase
             ['second', '{0}first|[1,3]second|[4,*]third', 1],
             ['third', '{0}first|[1,3]second|[4,*]third', 9],
 
+            ['first', '[*,-1]first|{0}second|[1,*]third', -4],
+            ['first', '[*,-1] first|{0} second|[1,*] third', -4],
+            ['second', '[*,-1]first|{0}second|[1,*]third', 0],
+            ['second', '[*,-1] first|{0} second|[1,*] third', 0],
+            ['third', '[*,-1]first|{0}second|[1,*]third', 9],
+            ['first', '[-5,-1]first|{0}second|[1,*]third', -4],
+
             ['first', 'first|second|third', 1],
             ['second', 'first|second|third', 9],
             ['second', 'first|second|third', 0],
 
             ['first', '{0}  first | { 1 } second', 0],
             ['first', '[4,*]first | [1,3]second', 100],
+
+            ['[first](//example.com)', '[first](//example.com)|[second](//test.com)', 1],
+            ['[second](//test.com)', '[first](//example.com)|[second](//test.com)', 2],
+            ['[first](//example.com)', '{0}[first](//example.com)|{1}[second](//test.com)', 0],
+            ['[second](//test.com)', '{0}[first](//example.com)|{1}[second](//test.com)', 1],
+            ['[first](//example.com)', '{0}[first](//example.com)|[2,*][second](//test.com)', 0],
+            ['[first](//example.com)', '{0}[first](//example.com)|[2,*][second](//test.com)', 1],
+            ['[second](//test.com)', '{0}[first](//example.com)|[2,*][second](//test.com)', 10],
+            ['[first](//example.com)', '{0}[first](//example.com)|{2.3}[second](//test.com)', 0],
+            ['[first](//example.com)', '{0}[first](//example.com)|{2.3}[second](//test.com)', 1],
+            ['[second](//test.com)', '{0}[first](//example.com)|{2.3}[second](//test.com)', 2.3],
         ];
     }
 }

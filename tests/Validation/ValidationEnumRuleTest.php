@@ -7,6 +7,9 @@ use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Database\Eloquent\Casts\ArrayObject;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Facade;
+use Illuminate\Tests\Validation\Fixtures\IntegerStatus;
+use Illuminate\Tests\Validation\Fixtures\PureEnum;
+use Illuminate\Tests\Validation\Fixtures\StringStatus;
 use Illuminate\Translation\ArrayLoader;
 use Illuminate\Translation\Translator;
 use Illuminate\Validation\Rules\Enum;
@@ -15,7 +18,7 @@ use Illuminate\Validation\Validator;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-include_once 'Enums.php';
+include_once 'Fixtures/Enums.php';
 
 class ValidationEnumRuleTest extends TestCase
 {
@@ -301,6 +304,27 @@ class ValidationEnumRuleTest extends TestCase
             'Please choose a valid status (dot notation)',
             'Please choose a valid status (fqcn)',
         ], $v->messages()->all());
+    }
+
+    public function testEnumRuleIsStringable()
+    {
+        $rule = new Enum(StringStatus::class);
+
+        $this->assertSame('in:"pending","done"', (string) $rule);
+    }
+
+    public function testEnumRuleStringableWithOnly()
+    {
+        $rule = (new Enum(StringStatus::class))->only([StringStatus::pending]);
+
+        $this->assertSame('in:"pending"', (string) $rule);
+    }
+
+    public function testEnumRuleStringableWithExcept()
+    {
+        $rule = (new Enum(StringStatus::class))->except([StringStatus::pending]);
+
+        $this->assertSame('in:"done"', (string) $rule);
     }
 
     protected function setUp(): void

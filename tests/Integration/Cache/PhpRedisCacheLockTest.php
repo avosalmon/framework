@@ -3,6 +3,8 @@
 namespace Illuminate\Tests\Integration\Cache;
 
 use Illuminate\Foundation\Testing\Concerns\InteractsWithRedis;
+use Illuminate\Redis\Connections\PhpRedisClusterConnection;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Cache;
 use Orchestra\Testbench\TestCase;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
@@ -17,13 +19,19 @@ class PhpRedisCacheLockTest extends TestCase
         parent::setUp();
 
         $this->setUpRedis();
+
+        $connection = $this->app['redis']->connection();
+        $this->markTestSkippedUnless(
+            $connection instanceof PhpRedisConnection || $connection instanceof PhpRedisClusterConnection,
+            'This test is for phpredis only',
+        );
     }
 
     protected function tearDown(): void
     {
-        parent::tearDown();
-
         $this->tearDownRedis();
+
+        parent::tearDown();
     }
 
     public function testRedisLockCanBeAcquiredAndReleasedWithoutSerializationAndCompression()
@@ -85,6 +93,48 @@ class PhpRedisCacheLockTest extends TestCase
         $lock = $store->lock('foo', 10);
         $this->assertTrue($lock->get());
         $this->assertFalse($store->lock('foo', 10)->get());
+        $lock->release();
+        $this->assertNull($store->lockConnection()->get($store->getPrefix().'foo'));
+    }
+
+    public function testRedisLockCanBeRefreshedWithPhpSerialization()
+    {
+        $this->app['config']->set('database.redis.client', 'phpredis');
+        $this->app['config']->set('cache.stores.redis.connection', 'default');
+        $this->app['config']->set('cache.stores.redis.lock_connection', 'default');
+
+        /** @var \Illuminate\Cache\RedisStore $store */
+        $store = Cache::store('redis');
+        /** @var \Redis $client */
+        $client = $store->lockConnection()->client();
+
+        $client->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP);
+        $store->lock('foo')->forceRelease();
+        $lock = $store->lock('foo', 10);
+        $this->assertTrue($lock->get());
+        $this->assertTrue($lock->refresh(30));
+        $this->assertGreaterThan(10, $client->ttl($store->getPrefix().'foo'));
+        $lock->release();
+        $this->assertNull($store->lockConnection()->get($store->getPrefix().'foo'));
+    }
+
+    public function testRedisLockCanBeRefreshedWithJsonSerialization()
+    {
+        $this->app['config']->set('database.redis.client', 'phpredis');
+        $this->app['config']->set('cache.stores.redis.connection', 'default');
+        $this->app['config']->set('cache.stores.redis.lock_connection', 'default');
+
+        /** @var \Illuminate\Cache\RedisStore $store */
+        $store = Cache::store('redis');
+        /** @var \Redis $client */
+        $client = $store->lockConnection()->client();
+
+        $client->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_JSON);
+        $store->lock('foo')->forceRelease();
+        $lock = $store->lock('foo', 10);
+        $this->assertTrue($lock->get());
+        $this->assertTrue($lock->refresh(30));
+        $this->assertGreaterThan(10, $client->ttl($store->getPrefix().'foo'));
         $lock->release();
         $this->assertNull($store->lockConnection()->get($store->getPrefix().'foo'));
     }
@@ -210,7 +260,6 @@ class PhpRedisCacheLockTest extends TestCase
             $this->markTestSkipped('Redis extension is not configured to support the lz4 compression.');
         }
 
-        $this->app['config']->set('database.redis.client', 'phpredis');
         $this->app['config']->set('cache.stores.redis.connection', 'default');
         $this->app['config']->set('cache.stores.redis.lock_connection', 'default');
 
