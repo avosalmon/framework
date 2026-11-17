@@ -21,14 +21,18 @@ use Illuminate\Queue\QueueRoutes;
 use Illuminate\Support\Testing\Fakes\BusFake;
 use Illuminate\Support\Testing\Fakes\EventFake;
 use Illuminate\Tests\Notifications\Fixtures\ChannelSpy;
-use Mockery;
+use JMac\Testing\Double;
+use JMac\Testing\Integrations\PHPUnit\VerifiesDoubles;
 use PHPUnit\Framework\TestCase;
+use RuntimeException;
 use Symfony\Component\Mailer\Exception\HttpTransportException;
 use Symfony\Component\Mailer\Exception\TransportException;
 use Symfony\Contracts\HttpClient\ResponseInterface;
 
 class NotificationSenderTest extends TestCase
 {
+    use VerifiesDoubles;
+
     protected function tearDown(): void
     {
         Container::setInstance(null);
@@ -223,11 +227,11 @@ class NotificationSenderTest extends TestCase
         $notifiable = new AnonymousNotifiable;
         $container = new Container;
         $container->instance('config', ['app.name' => 'Name', 'app.logo' => 'Logo']);
-        $manager = Mockery::mock(ChannelManager::class.'[driver]', [$container]);
+        $manager = Double::for(ChannelManager::class)->passthru(new ChannelManager($container));
         $driver = new ChannelSpy;
-        $response = Mockery::mock(ResponseInterface::class);
+        $response = Double::for(ResponseInterface::class);
         $driver->exception = new HttpTransportException('Transport error', $response);
-        $manager->expects('driver')->andReturn($driver);
+        $manager->expects('driver')->returns($driver);
         $bus = new BusFake(new BusDispatcher(new Container));
 
         $events = new EventDispatcher;
@@ -246,14 +250,58 @@ class NotificationSenderTest extends TestCase
         }
     }
 
+    public function test_notification_failed_is_dispatched_after_a_channel_dispatched_it_without_throwing()
+    {
+        $notifiable = new AnonymousNotifiable;
+        $container = new Container;
+        $container->instance('config', ['app.name' => 'Name', 'app.logo' => 'Logo']);
+        $manager = Double::for(ChannelManager::class)->passthru(new ChannelManager($container));
+        $bus = new BusFake(new BusDispatcher(new Container));
+        $events = new EventDispatcher;
+
+        $failed = [];
+        $events->listen(NotificationFailed::class, function ($event) use (&$failed) {
+            $failed[] = $event->channel;
+        });
+
+        $pushChannel = new class($events)
+        {
+            public function __construct(protected $events)
+            {
+            }
+
+            public function send($notifiable, $notification)
+            {
+                $this->events->dispatch(new NotificationFailed($notifiable, $notification, 'push'));
+            }
+        };
+
+        $smsChannel = new ChannelSpy;
+        $smsChannel->exception = new RuntimeException('SMS gateway down');
+
+        $manager->expects('driver')->with('push')->returns($pushChannel);
+        $manager->expects('driver')->with('sms')->returns($smsChannel);
+
+        $sender = new NotificationSender($manager, $bus, $events);
+
+        $sender->sendNow($notifiable, new DummyNotificationWithViaConnections, ['push']);
+
+        try {
+            $sender->sendNow($notifiable, new DummyNotificationWithViaConnections, ['sms']);
+            $this->fail('Expected exception was not thrown.');
+        } catch (RuntimeException) {
+            $this->assertSame(['push', 'sms'], $failed);
+        }
+    }
+
     public function test_it_preserves_notification_state_mutated_in_via_method()
     {
         $notifiable = new AnonymousNotifiable;
         $container = new Container;
         $container->instance('config', ['app.name' => 'Name', 'app.logo' => 'Logo']);
-        $manager = Mockery::mock(ChannelManager::class.'[driver]', [$container]);
+        $manager = Double::for(ChannelManager::class)->passthru(new ChannelManager($container));
         $driver = new ChannelSpy;
-        $manager->expects('driver')->andReturn($driver);
+        $manager->expects('driver')->returns($driver);
         $bus = new BusFake(new BusDispatcher(new Container));
 
         $events = new EventFake(new EventDispatcher);

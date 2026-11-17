@@ -5,6 +5,7 @@ namespace Illuminate\Foundation\Testing\Concerns;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Application as Artisan;
 use Illuminate\Cookie\Middleware\EncryptCookies;
+use Illuminate\Database\DatabaseManager;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Migrations\Migrator;
@@ -43,6 +44,7 @@ use Illuminate\Support\Sleep;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Validator;
 use Illuminate\View\Component;
+use Laravel\Prompts\Prompt;
 use Mockery;
 use Mockery\Exception\InvalidCountException;
 use PHPUnit\Metadata\Annotation\Parser\Registry as PHPUnitRegistry;
@@ -130,6 +132,8 @@ trait InteractsWithTestCaseLifecycle
 
             ParallelTesting::callTearDownTestCaseCallbacks($this);
 
+            $this->disconnectDatabaseConnections();
+
             $this->app->flush();
 
             $this->app = null;
@@ -185,6 +189,23 @@ trait InteractsWithTestCaseLifecycle
         }
     }
 
+    protected function disconnectDatabaseConnections(): void
+    {
+        if (! $this->app->resolved('db')) {
+            return;
+        }
+
+        $database = $this->app->make('db');
+
+        if (! $database instanceof DatabaseManager) {
+            return;
+        }
+
+        foreach ($database->getConnections() as $connection) {
+            $connection->disconnect();
+        }
+    }
+
     /**
      * Reset static state between test executions.
      */
@@ -209,6 +230,7 @@ trait InteractsWithTestCaseLifecycle
         Migrator::withoutMigrations([]);
         Once::flush();
         PreventRequestsDuringMaintenance::flushState();
+        Prompt::flushState();
         Queue::createPayloadUsing(null);
         RegisterProviders::flushState();
         Response::flushState();

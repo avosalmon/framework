@@ -25,8 +25,9 @@ use Illuminate\Tests\Support\Fixtures\TestJsonSerializeWithScalarValueObject;
 use Illuminate\Tests\Support\Fixtures\TestStringBackedEnum;
 use Illuminate\Tests\Support\Fixtures\TestTraversableAndJsonSerializableObject;
 use InvalidArgumentException;
+use JMac\Testing\Double;
+use JMac\Testing\Integrations\PHPUnit\VerifiesDoubles;
 use JsonSerializable;
-use Mockery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\IgnoreDeprecations;
 use PHPUnit\Framework\TestCase;
@@ -43,6 +44,8 @@ include_once 'Fixtures/Enums.php';
 
 class SupportCollectionTest extends TestCase
 {
+    use VerifiesDoubles;
+
     #[DataProvider('collectionClassProvider')]
     public function testFirstReturnsFirstItemInCollection($collection)
     {
@@ -714,10 +717,10 @@ class SupportCollectionTest extends TestCase
     #[DataProvider('collectionClassProvider')]
     public function testToArrayCallsToArrayOnEachItemInCollection($collection)
     {
-        $item1 = Mockery::mock(Arrayable::class);
-        $item1->expects('toArray')->andReturn('foo.array');
-        $item2 = Mockery::mock(Arrayable::class);
-        $item2->expects('toArray')->andReturn('bar.array');
+        $item1 = Double::for(Arrayable::class);
+        $item1->expects('toArray')->returns('foo.array');
+        $item2 = Double::for(Arrayable::class);
+        $item2->expects('toArray')->returns('bar.array');
         $c = new $collection([$item1, $item2]);
         $results = $c->toArray();
 
@@ -739,10 +742,10 @@ class SupportCollectionTest extends TestCase
     #[DataProvider('collectionClassProvider')]
     public function testJsonSerializeCallsToArrayOrJsonSerializeOnEachItemInCollection($collection)
     {
-        $item1 = Mockery::mock(JsonSerializable::class);
-        $item1->expects('jsonSerialize')->andReturn('foo.json');
-        $item2 = Mockery::mock(Arrayable::class);
-        $item2->expects('toArray')->andReturn('bar.array');
+        $item1 = Double::for(JsonSerializable::class);
+        $item1->expects('jsonSerialize')->returns('foo.json');
+        $item2 = Double::for(Arrayable::class);
+        $item2->expects('toArray')->returns('bar.array');
         $c = new $collection([$item1, $item2]);
         $results = $c->jsonSerialize();
 
@@ -1365,6 +1368,7 @@ class SupportCollectionTest extends TestCase
             $c->whereBetween('v', [2, 4])->values()->all());
         $this->assertEquals([['v' => 1]], $c->whereBetween('v', [-1, 1])->all());
         $this->assertEquals([['v' => 3], ['v' => '3']], $c->whereBetween('v', [3, 3])->values()->all());
+        $this->assertEquals([['v' => 2], ['v' => 3], ['v' => '3']], $c->whereBetween('v', new Collection([2, 3]))->values()->all());
     }
 
     #[DataProvider('collectionClassProvider')]
@@ -1375,6 +1379,7 @@ class SupportCollectionTest extends TestCase
         $this->assertEquals([['v' => 1]], $c->whereNotBetween('v', [2, 4])->values()->all());
         $this->assertEquals([['v' => 2], ['v' => 3], ['v' => 3], ['v' => 4]], $c->whereNotBetween('v', [-1, 1])->values()->all());
         $this->assertEquals([['v' => 1], ['v' => '2'], ['v' => '4']], $c->whereNotBetween('v', [3, 3])->values()->all());
+        $this->assertEquals([['v' => 1], ['v' => 4]], $c->whereNotBetween('v', new Collection([2, 3]))->values()->all());
     }
 
     #[DataProvider('collectionClassProvider')]
@@ -1411,6 +1416,13 @@ class SupportCollectionTest extends TestCase
         // Nested arrays containing collections containing arrays are flattened
         $c = new $collection([['#foo', new $collection(['#bar', ['#zap']])], ['#baz']]);
         $this->assertEquals(['#foo', '#bar', '#zap', '#baz'], $c->flatten()->all());
+    }
+
+    #[DataProvider('collectionClassProvider')]
+    public function testFlattenWithMixedCollectionTypes($collection)
+    {
+        $c = new $collection([new Collection(['#foo', new LazyCollection(['#bar'])]), new LazyCollection(['#baz', new Collection(['#zap'])])]);
+        $this->assertEquals(['#foo', '#bar', '#baz', '#zap'], $c->flatten()->all());
     }
 
     #[DataProvider('collectionClassProvider')]
@@ -1967,6 +1979,13 @@ class SupportCollectionTest extends TestCase
     }
 
     #[DataProvider('collectionClassProvider')]
+    public function testCollapseWithMixedCollectionTypes($collection)
+    {
+        $data = new $collection([new Collection([1, 2]), new LazyCollection([3, 4]), [5]]);
+        $this->assertEquals([1, 2, 3, 4, 5], $data->collapse()->all());
+    }
+
+    #[DataProvider('collectionClassProvider')]
     public function testCollapseWithKeys($collection)
     {
         $data = new $collection([[1 => 'a'], [3 => 'c'], [2 => 'b'], 'drop']);
@@ -1982,6 +2001,13 @@ class SupportCollectionTest extends TestCase
     {
         $data = new $collection([new $collection(['a' => '1a', 'b' => '1b']), new $collection(['b' => '2b', 'c' => '2c']), 'drop']);
         $this->assertEquals(['a' => '1a', 'b' => '2b', 'c' => '2c'], $data->collapseWithKeys()->all());
+    }
+
+    #[DataProvider('collectionClassProvider')]
+    public function testCollapseWithKeysWithMixedCollectionTypes($collection)
+    {
+        $data = new $collection([new Collection(['a' => 1, 'b' => 2]), new LazyCollection(['b' => 3, 'c' => 4])]);
+        $this->assertEquals(['a' => 1, 'b' => 3, 'c' => 4], $data->collapseWithKeys()->all());
     }
 
     #[DataProvider('collectionClassProvider')]
@@ -5351,6 +5377,20 @@ class SupportCollectionTest extends TestCase
     {
         $data = new $collection([null, null]);
         $this->assertNull($data->mode());
+    }
+
+    #[DataProvider('collectionClassProvider')]
+    public function testModeOnCollectionWithFloats($collection)
+    {
+        $data = new $collection([1.5, 1.5, 2.5]);
+        $this->assertSame([1.5], $data->mode());
+
+        $data = new $collection([
+            (object) ['foo' => 0.5],
+            (object) ['foo' => 0.7],
+            (object) ['foo' => 0.7],
+        ]);
+        $this->assertSame([0.7], $data->mode('foo'));
     }
 
     #[DataProvider('collectionClassProvider')]

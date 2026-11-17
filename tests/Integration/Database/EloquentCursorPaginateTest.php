@@ -235,6 +235,48 @@ class EloquentCursorPaginateTest extends DatabaseTestCase
         $this->assertSame('B (post)', current($result->items())->alias, 'Expect the paginated query would return `B (post)`');
     }
 
+    public function testPaginationWithMultipleAliasesAndMultipleOrders()
+    {
+        TestUser::fillAndInsert([['name' => 'A'], ['name' => 'C']]);
+        TestPost::fillAndInsert([['title' => 'A', 'user_id' => 2], ['title' => 'B', 'user_id' => 1]]);
+
+        $table1 = TestPost::select(['title as label', 'user_id as rank']);
+        $table2 = TestUser::select(['name as label', 'id as rank']);
+
+        $result = $table1->toBase()
+            ->union($table2->toBase())
+            ->orderBy('label')
+            ->orderBy('rank')
+            ->cursorPaginate(1, ['*'], 'cursor', new Cursor(['label' => 'A', 'rank' => 1]));
+
+        $this->assertCount(1, $result->items());
+        $this->assertSame('A', current($result->items())->label);
+        $this->assertEquals(2, current($result->items())->rank);
+    }
+
+    public function testPaginationWithUnionAndAliasedExpressions()
+    {
+        TestUser::fillAndInsert([['name' => 'alpha'], ['name' => 'bravo']]);
+        TestPost::fillAndInsert([['title' => 'bravo'], ['title' => 'charlie']]);
+
+        $query = fn ($direction) => TestPost::select('test_posts.id')->selectRaw('UPPER(test_posts.title) as label')->toBase()
+            ->unionAll(TestUser::select('test_users.id')->selectRaw('UPPER(test_users.name) as label')->toBase())
+            ->orderBy('label', $direction)
+            ->orderBy('id', $direction);
+
+        $first = $query('asc')->cursorPaginate(2);
+        $second = $query('asc')->cursorPaginate(2, ['*'], 'cursor', $first->nextCursor());
+
+        $this->assertSame(['BRAVO', 'CHARLIE'], collect($second->items())->pluck('label')->all());
+        $this->assertEquals([2, 2], collect($second->items())->pluck('id')->all());
+
+        $first = $query('desc')->cursorPaginate(2);
+        $second = $query('desc')->cursorPaginate(2, ['*'], 'cursor', $first->nextCursor());
+
+        $this->assertSame(['BRAVO', 'ALPHA'], collect($second->items())->pluck('label')->all());
+        $this->assertEquals([1, 1], collect($second->items())->pluck('id')->all());
+    }
+
     public function testPaginationWithAliasedOrderBy()
     {
         TestUser::fillAndInsert([[], [], [], [], [], []]);
@@ -291,6 +333,48 @@ class EloquentCursorPaginateTest extends DatabaseTestCase
         $this->assertCount(5, $query->get());
         $this->assertEquals(5, $query->count());
         $this->assertCount(5, $query->cursorPaginate()->items());
+    }
+
+    public function testLatestAndOldestPaginationWithJoin()
+    {
+        $user = TestUser::create(['name' => 'Taylor']);
+
+        for ($i = 1; $i <= 3; $i++) {
+            TestPost::create(['title' => 'Title '.$i, 'user_id' => $user->id, 'created_at' => now()->startOfSecond()->addMinutes($i)]);
+        }
+
+        $query = fn () => TestPost::query()
+            ->join('test_users', 'test_users.id', '=', 'test_posts.user_id')
+            ->select('test_posts.*');
+
+        $firstPage = $query()->latest()->cursorPaginate(2);
+        $secondPage = $query()->latest()->cursorPaginate(2, ['*'], 'cursor', $firstPage->nextCursor());
+
+        $this->assertSame(['Title 3', 'Title 2'], $firstPage->pluck('title')->all());
+        $this->assertSame(['Title 1'], $secondPage->pluck('title')->all());
+
+        $firstPage = $query()->oldest()->cursorPaginate(2);
+        $secondPage = $query()->oldest()->cursorPaginate(2, ['*'], 'cursor', $firstPage->nextCursor());
+
+        $this->assertSame(['Title 1', 'Title 2'], $firstPage->pluck('title')->all());
+        $this->assertSame(['Title 3'], $secondPage->pluck('title')->all());
+    }
+
+    public function testLatestAndOldestWithJoinFromSubquery()
+    {
+        $user = TestUser::create(['name' => 'Taylor']);
+
+        for ($i = 1; $i <= 3; $i++) {
+            TestPost::create(['title' => 'Title '.$i, 'user_id' => $user->id, 'created_at' => now()->startOfSecond()->addMinutes($i)]);
+        }
+
+        $query = fn () => TestPost::query()
+            ->fromSub(TestPost::query(), 'posts')
+            ->joinSub(TestUser::query()->select('id', 'name'), 'users', 'users.id', '=', 'posts.user_id')
+            ->select('posts.*');
+
+        $this->assertSame(['Title 3', 'Title 2', 'Title 1'], $query()->latest()->pluck('title')->all());
+        $this->assertSame(['Title 1', 'Title 2', 'Title 3'], $query()->oldest()->pluck('title')->all());
     }
 }
 

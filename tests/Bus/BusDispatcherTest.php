@@ -8,15 +8,22 @@ use Illuminate\Config\Repository as Config;
 use Illuminate\Container\Container;
 use Illuminate\Contracts\Queue\Queue;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\Attributes\Connection;
+use Illuminate\Queue\Attributes\Delay;
+use Illuminate\Queue\Attributes\Queue as QueueAttribute;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\QueueRoutes;
 use Illuminate\Support\Testing\Fakes\QueueFake;
-use Mockery;
+use JMac\Testing\Double;
+use JMac\Testing\Integrations\PHPUnit\VerifiesDoubles;
+use JMac\Testing\Matching\Argument;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
 class BusDispatcherTest extends TestCase
 {
+    use VerifiesDoubles;
+
     public function testCommandsThatShouldQueueIsQueued()
     {
         $container = new Container;
@@ -53,13 +60,35 @@ class BusDispatcherTest extends TestCase
         $container->instance('queue.routes', new QueueRoutes);
         Container::setInstance($container);
         $dispatcher = new Dispatcher($container, function () {
-            $mock = Mockery::mock(Queue::class);
-            $mock->expects('later')->with(10, Mockery::type(BusDispatcherTestSpecificQueueAndDelayCommand::class), '', 'foo');
+            $mock = Double::for(Queue::class);
+            $mock->expects('later')->with(10, Argument::type(BusDispatcherTestSpecificQueueAndDelayCommand::class), '', 'foo');
 
             return $mock;
         });
 
         $dispatcher->dispatch(new BusDispatcherTestSpecificQueueAndDelayCommand);
+
+        Container::setInstance(null);
+    }
+
+    public function testCommandsAreQueuedUsingAttributesInheritedFromParentClass()
+    {
+        $container = new Container;
+        $container->instance('queue.routes', new QueueRoutes);
+        Container::setInstance($container);
+        $usedConnection = null;
+        $dispatcher = new Dispatcher($container, function ($connection) use (&$usedConnection) {
+            $usedConnection = $connection;
+
+            $mock = Double::for(Queue::class);
+            $mock->expects('later')->with(10, Argument::type(BusDispatcherTestQueueableChildCommand::class), '', 'foo');
+
+            return $mock;
+        });
+
+        $dispatcher->dispatch(new BusDispatcherTestQueueableChildCommand);
+
+        $this->assertSame('redis', $usedConnection);
 
         Container::setInstance(null);
     }
@@ -112,8 +141,8 @@ class BusDispatcherTest extends TestCase
         $queueRoutes->forward('reports', 'processing', 'cloud');
         $container->instance('queue.routes', $queueRoutes);
 
-        $mock = Mockery::mock(Queue::class);
-        $mock->expects('push')->with(Mockery::type(BusDispatcherQueueable::class), '', 'reports');
+        $mock = Double::for(Queue::class);
+        $mock->expects('push')->with(Argument::type(BusDispatcherQueueable::class), '', 'reports');
 
         $usedConnection = false;
 
@@ -189,9 +218,9 @@ class BusDispatcherTest extends TestCase
         $container->instance('queue.routes', new QueueRoutes);
         Container::setInstance($container);
 
-        $mock = Mockery::mock(Queue::class);
-        $mock->expects('bulk')->with(Mockery::on(fn ($jobs) => count($jobs) === 2), '', null);
-        $mock->expects('bulk')->with(Mockery::on(fn ($jobs) => count($jobs) === 1), '', 'high');
+        $mock = Double::for(Queue::class);
+        $mock->expects('bulk')->with(Argument::satisfies(fn ($jobs) => count($jobs) === 2), '', null);
+        $mock->expects('bulk')->with(Argument::satisfies(fn ($jobs) => count($jobs) === 1), '', 'high');
 
         $dispatcher = new Dispatcher($container, fn () => $mock);
 
@@ -242,6 +271,19 @@ class BusDispatcherTestSpecificQueueAndDelayCommand implements ShouldQueue
 class BusDispatcherTestSpecificQueueCommand implements ShouldQueue
 {
     public $queue = 'high';
+}
+
+#[Connection('redis')]
+#[QueueAttribute('foo')]
+#[Delay(10)]
+abstract class BusDispatcherTestParentCommandWithAttributes implements ShouldQueue
+{
+    //
+}
+
+class BusDispatcherTestQueueableChildCommand extends BusDispatcherTestParentCommandWithAttributes
+{
+    use Queueable;
 }
 
 class BusDispatcherQueueable implements ShouldQueue

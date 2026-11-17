@@ -4,11 +4,13 @@ namespace Illuminate\Tests\Foundation\Testing;
 
 use Illuminate\Contracts\Console\Kernel as ConsoleKernelContract;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+use Illuminate\Foundation\Testing\Attributes\WithoutMigrationEvents;
 use Illuminate\Foundation\Testing\Concerns\InteractsWithConsole;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Tests\Foundation\Testing\Fixtures\ConsoleKernelSpy;
-use Mockery;
+use JMac\Testing\Double;
+use JMac\Testing\Integrations\PHPUnit\VerifiesDoubles;
 use Orchestra\Testbench\Concerns\ApplicationTestingHooks;
 use Orchestra\Testbench\Foundation\Application as Testbench;
 use PHPUnit\Framework\TestCase;
@@ -20,6 +22,7 @@ class LazilyRefreshDatabaseTest extends TestCase
     use ApplicationTestingHooks;
     use InteractsWithConsole;
     use LazilyRefreshDatabase;
+    use VerifiesDoubles;
 
     public $dropViews = false;
 
@@ -76,11 +79,10 @@ class LazilyRefreshDatabaseTest extends TestCase
 
     public function testDatabaseIsNotRefreshedWithoutInteraction()
     {
-        $kernel = Mockery::spy(ConsoleKernel::class);
+        $kernel = Double::for(ConsoleKernel::class);
         $this->app->instance(ConsoleKernelContract::class, $kernel);
 
-        $kernel->shouldReceive('call')
-            ->never();
+        $kernel->expects('call')->never();
 
         $this->refreshDatabase();
 
@@ -100,5 +102,36 @@ class LazilyRefreshDatabaseTest extends TestCase
         $this->assertSame([
             ['migrate:fresh', ['--drop-views' => false, '--drop-types' => false, '--seed' => false]],
         ], $kernel->calls);
+    }
+
+    #[WithoutMigrationEvents]
+    public function testMigrationQueriesAreNotDispatchedToTheTestMethod()
+    {
+        $database = $this->app->make('db');
+
+        $this->app->instance(ConsoleKernelContract::class, new class($database) extends ConsoleKernelSpy
+        {
+            public function __construct(protected $database)
+            {
+            }
+
+            public function call($command, array $parameters = [], $outputBuffer = null)
+            {
+                $this->database->connection('testing')->select('select 2');
+
+                return parent::call($command, $parameters, $outputBuffer);
+            }
+        });
+
+        $queries = [];
+
+        $database->listen(function ($query) use (&$queries) {
+            $queries[] = $query->sql;
+        });
+
+        $this->refreshDatabase();
+        $database->connection('testing')->select('select 1');
+
+        $this->assertSame(['select 1'], $queries);
     }
 }

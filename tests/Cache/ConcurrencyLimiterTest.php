@@ -10,6 +10,8 @@ use Illuminate\Cache\Limiters\LimiterTimeoutException;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Store;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Sleep;
 use PHPUnit\Framework\TestCase;
 use Throwable;
 
@@ -62,6 +64,9 @@ class ConcurrencyLimiterTest extends TestCase
 
     public function testItReleasesLockIfTaskTookTooLong()
     {
+        Sleep::fake(syncWithCarbon: true);
+        Carbon::setTestNow(Carbon::now()->startOfSecond());
+
         $store = [];
 
         $lock = new ConcurrencyLimiterMockThatDoesntRelease($this->repository->getStore(), 'key', 1, 1);
@@ -78,7 +83,7 @@ class ConcurrencyLimiterTest extends TestCase
             $this->assertInstanceOf(LimiterTimeoutException::class, $e);
         }
 
-        usleep(1.2 * 1000000);
+        Sleep::usleep(1.2 * 1000000);
 
         $lock->block(0, function () use (&$store) {
             $store[] = 3;
@@ -89,6 +94,9 @@ class ConcurrencyLimiterTest extends TestCase
 
     public function testItFailsImmediatelyOrRetriesForAWhileBasedOnAGivenTimeout()
     {
+        Sleep::fake(syncWithCarbon: true);
+        Carbon::setTestNow(Carbon::now()->startOfSecond());
+
         $store = [];
 
         $lock = new ConcurrencyLimiterMockThatDoesntRelease($this->repository->getStore(), 'key', 1, 2);
@@ -114,6 +122,9 @@ class ConcurrencyLimiterTest extends TestCase
 
     public function testItFailsAfterRetryTimeout()
     {
+        Sleep::fake(syncWithCarbon: true);
+        Carbon::setTestNow(Carbon::now()->startOfSecond());
+
         $store = [];
 
         $lock = new ConcurrencyLimiterMockThatDoesntRelease($this->repository->getStore(), 'key', 1, 10);
@@ -131,6 +142,27 @@ class ConcurrencyLimiterTest extends TestCase
         }
 
         $this->assertEquals([1], $store);
+    }
+
+    public function testRetryTimeoutRespectsFakedSleep()
+    {
+        Sleep::fake(syncWithCarbon: true);
+        Carbon::setTestNow(Carbon::now()->startOfSecond());
+
+        $lock = new ConcurrencyLimiterMockThatDoesntRelease($this->repository->getStore(), 'key', 1, 10);
+
+        $lock->block(2, fn () => null);
+
+        try {
+            $lock->block(2, fn () => null, 500);
+            $this->fail('Expected LimiterTimeoutException.');
+        } catch (LimiterTimeoutException) {
+            // 2s timeout / 500ms faked sleeps advancing Carbon
+            Sleep::assertSleptTimes(4);
+        } finally {
+            Sleep::fake(false);
+            Carbon::setTestNow();
+        }
     }
 
     public function testItReleasesIfErrorIsThrown()

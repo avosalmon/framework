@@ -34,6 +34,7 @@ use Illuminate\Database\Eloquent\Casts\AsStringable;
 use Illuminate\Database\Eloquent\Casts\AsUri;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Concerns\HasDefaultAttributes;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\Factory;
@@ -47,6 +48,7 @@ use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Database\Query\Builder as BaseBuilder;
 use Illuminate\Database\Query\Grammars\Grammar;
 use Illuminate\Database\Query\Processors\Processor;
+use Illuminate\Database\Schema\Builder as SchemaBuilder;
 use Illuminate\Database\SQLiteConnection;
 use Illuminate\Events\Dispatcher as EventDispatcher;
 use Illuminate\Support\Carbon;
@@ -61,9 +63,11 @@ use Illuminate\Tests\Database\Fixtures\Enums\StringStatus;
 use Illuminate\Tests\Database\Fixtures\TestCast;
 use Illuminate\Tests\Database\Fixtures\TestValueObject;
 use InvalidArgumentException;
+use JMac\Testing\Double;
+use JMac\Testing\Integrations\PHPUnit\VerifiesDoubles;
 use LogicException;
-use Mockery;
 use PDO;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\Attributes\TestWith;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -75,6 +79,7 @@ include_once 'Fixtures/Enums/Enums.php';
 class DatabaseEloquentModelTest extends TestCase
 {
     use RestoresConnectionResolver;
+    use VerifiesDoubles;
 
     protected function setUp(): void
     {
@@ -347,177 +352,6 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertTrue($model->isDirty('asFluentAttribute'));
     }
 
-    // public function testDirtyOnCastedEncryptedCollection()
-    // {
-    //     $this->encrypter = Mockery::mock(Encrypter::class);
-    //     Crypt::swap($this->encrypter);
-    //     Model::$encrypter = null;
-
-    //     $this->encrypter->expects('encryptString')
-    //         ->with('{"foo":"bar"}')
-    //         ->andReturn('encrypted-value');
-
-    //     $this->encrypter->expects('decryptString')
-    //         ->with('encrypted-value')
-    //         ->andReturn('{"foo": "bar"}');
-
-    //     $this->encrypter->expects('encryptString')
-    //         ->with('{"foo":"baz"}')
-    //         ->andReturn('new-encrypted-value');
-
-    //     $this->encrypter->expects('decrypt')
-    //         ->with('encrypted-value', false)
-    //         ->andReturn('{"foo": "bar"}');
-
-    //     $this->encrypter->expects('decrypt')
-    //         ->with('new-encrypted-value', false)
-    //         ->andReturn('{"foo":"baz"}');
-
-    //     $model = new EloquentModelCastingStub;
-    //     $model->setRawAttributes([
-    //         'asEncryptedCollectionAttribute' => 'encrypted-value',
-    //     ]);
-    //     $model->syncOriginal();
-
-    //     $this->assertInstanceOf(BaseCollection::class, $model->asEncryptedCollectionAttribute);
-    //     $this->assertFalse($model->isDirty('asEncryptedCollectionAttribute'));
-
-    //     $model->asEncryptedCollectionAttribute = ['foo' => 'bar'];
-    //     $this->assertFalse($model->isDirty('asEncryptedCollectionAttribute'));
-
-    //     $model->asEncryptedCollectionAttribute = ['foo' => 'baz'];
-    //     $this->assertTrue($model->isDirty('asEncryptedCollectionAttribute'));
-    // }
-
-    // public function testDirtyOnCastedEncryptedCustomCollection()
-    // {
-    //     $this->encrypter = Mockery::mock(Encrypter::class);
-    //     Crypt::swap($this->encrypter);
-    //     Model::$encrypter = null;
-
-    //     $this->encrypter->expects('encryptString')
-    //         ->twice()
-    //         ->with('{"foo":"bar"}')
-    //         ->andReturn('encrypted-custom-value');
-
-    //     $this->encrypter->expects('decryptString')
-    //         ->with('encrypted-custom-value')
-    //         ->andReturn('{"foo": "bar"}');
-
-    //     $this->encrypter->expects('encryptString')
-    //         ->with('{"foo":"baz"}')
-    //         ->andReturn('new-encrypted-custom-value');
-
-    //     $this->encrypter->expects('decrypt')
-    //         ->with('encrypted-custom-value', false)
-    //         ->andReturn('{"foo": "bar"}');
-
-    //     $this->encrypter->expects('decrypt')
-    //         ->with('new-encrypted-custom-value', false)
-    //         ->andReturn('{"foo":"baz"}');
-
-    //     $model = new EloquentModelCastingStub;
-    //     $model->setRawAttributes([
-    //         'asEncryptedCustomCollectionAttribute' => 'encrypted-custom-value',
-    //     ]);
-    //     $model->syncOriginal();
-
-    //     $this->assertInstanceOf(CustomCollection::class, $model->asEncryptedCustomCollectionAttribute);
-    //     $this->assertFalse($model->isDirty('asEncryptedCustomCollectionAttribute'));
-
-    //     $model->asEncryptedCustomCollectionAttribute = ['foo' => 'bar'];
-    //     $this->assertFalse($model->isDirty('asEncryptedCustomCollectionAttribute'));
-
-    //     $model->asEncryptedCustomCollectionAttribute = ['foo' => 'baz'];
-    //     $this->assertTrue($model->isDirty('asEncryptedCustomCollectionAttribute'));
-    // }
-
-    // public function testDirtyOnCastedEncryptedCustomCollectionAsArray()
-    // {
-    //     $this->encrypter = Mockery::mock(Encrypter::class);
-    //     Crypt::swap($this->encrypter);
-    //     Model::$encrypter = null;
-
-    //     $this->encrypter->expects('encryptString')
-    //         ->twice()
-    //         ->with('{"foo":"bar"}')
-    //         ->andReturn('encrypted-custom-value');
-
-    //     $this->encrypter->expects('decryptString')
-    //         ->with('encrypted-custom-value')
-    //         ->andReturn('{"foo": "bar"}');
-
-    //     $this->encrypter->expects('encryptString')
-    //         ->with('{"foo":"baz"}')
-    //         ->andReturn('new-encrypted-custom-value');
-
-    //     $this->encrypter->expects('decrypt')
-    //         ->with('encrypted-custom-value', false)
-    //         ->andReturn('{"foo": "bar"}');
-
-    //     $this->encrypter->expects('decrypt')
-    //         ->with('new-encrypted-custom-value', false)
-    //         ->andReturn('{"foo":"baz"}');
-
-    //     $model = new EloquentModelCastingStub;
-    //     $model->setRawAttributes([
-    //         'asEncryptedCustomCollectionAsArrayAttribute' => 'encrypted-custom-value',
-    //     ]);
-    //     $model->syncOriginal();
-
-    //     $this->assertInstanceOf(CustomCollection::class, $model->asEncryptedCustomCollectionAsArrayAttribute);
-    //     $this->assertFalse($model->isDirty('asEncryptedCustomCollectionAsArrayAttribute'));
-
-    //     $model->asEncryptedCustomCollectionAsArrayAttribute = ['foo' => 'bar'];
-    //     $this->assertFalse($model->isDirty('asEncryptedCustomCollectionAsArrayAttribute'));
-
-    //     $model->asEncryptedCustomCollectionAsArrayAttribute = ['foo' => 'baz'];
-    //     $this->assertTrue($model->isDirty('asEncryptedCustomCollectionAsArrayAttribute'));
-    // }
-
-    // public function testDirtyOnCastedEncryptedArrayObject()
-    // {
-    //     $this->encrypter = Mockery::mock(Encrypter::class);
-    //     Crypt::swap($this->encrypter);
-    //     Model::$encrypter = null;
-
-    //     $this->encrypter->expects('encryptString')
-    //         ->twice()
-    //         ->with('{"foo":"bar"}')
-    //         ->andReturn('encrypted-value');
-
-    //     $this->encrypter->expects('decryptString')
-    //         ->with('encrypted-value')
-    //         ->andReturn('{"foo": "bar"}');
-
-    //     $this->encrypter->expects('encryptString')
-    //         ->with('{"foo":"baz"}')
-    //         ->andReturn('new-encrypted-value');
-
-    //     $this->encrypter->expects('decrypt')
-    //         ->with('encrypted-value', false)
-    //         ->andReturn('{"foo": "bar"}');
-
-    //     $this->encrypter->expects('decrypt')
-    //         ->with('new-encrypted-value', false)
-    //         ->andReturn('{"foo":"baz"}');
-
-    //     $model = new EloquentModelCastingStub;
-    //     $model->setRawAttributes([
-    //         'asEncryptedArrayObjectAttribute' => 'encrypted-value',
-    //     ]);
-    //     $model->syncOriginal();
-
-    //     $this->assertInstanceOf(ArrayObject::class, $model->asEncryptedArrayObjectAttribute);
-    //     $this->assertFalse($model->isDirty('asEncryptedArrayObjectAttribute'));
-
-    //     $model->asEncryptedArrayObjectAttribute = ['foo' => 'bar'];
-    //     $this->assertFalse($model->isDirty('asEncryptedArrayObjectAttribute'));
-
-    //     $model->asEncryptedArrayObjectAttribute = ['foo' => 'baz'];
-    //     $this->assertTrue($model->isDirty('asEncryptedArrayObjectAttribute'));
-    // }
-
     public function testDirtyOnEnumCollectionObject()
     {
         $model = new EloquentModelCastingStub;
@@ -731,72 +565,6 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertEquals(21, $model->id);
     }
 
-    public function testFindMethodUseWritePdo()
-    {
-        EloquentModelFindWithWritePdoStub::onWriteConnection()->find(1);
-    }
-
-    public function testRefreshForUpdateUsesLockForUpdate()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes,load]');
-        $model->exists = true;
-        $model->setRawAttributes(['id' => 1, 'name' => 'Taylor'], true);
-
-        $freshModel = new EloquentModelStub;
-        $freshModel->setRawAttributes(['id' => 1, 'name' => 'Abigail']);
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->once()->andReturn($query);
-        $query->expects('lockForUpdate')->once()->andReturnSelf();
-        $query->expects('where')->once()->with('id', '=', 1)->andReturnSelf();
-        $query->expects('useWritePdo')->once()->andReturnSelf();
-        $query->expects('firstOrFail')->once()->andReturn($freshModel);
-        $model->expects('load')->once()->with([])->andReturnSelf();
-
-        $result = $model->refreshForUpdate();
-
-        $this->assertSame($model, $result);
-        $this->assertSame('Abigail', $model->name);
-        $this->assertEmpty($model->getDirty());
-        $this->assertSame('Abigail', $model->getOriginal('name'));
-    }
-
-    public function testDestroyMethodCallsQueryBuilderCorrectly()
-    {
-        EloquentModelDestroyStub::destroy(1, 2, 3);
-    }
-
-    public function testDestroyMethodCallsQueryBuilderCorrectlyWithCollection()
-    {
-        EloquentModelDestroyStub::destroy(new BaseCollection([1, 2, 3]));
-    }
-
-    public function testDestroyMethodCallsQueryBuilderCorrectlyWithEloquentCollection()
-    {
-        EloquentModelDestroyStub::destroy(new Collection([
-            new EloquentModelDestroyStub(['id' => 1]),
-            new EloquentModelDestroyStub(['id' => 2]),
-            new EloquentModelDestroyStub(['id' => 3]),
-        ]));
-    }
-
-    public function testDestroyMethodCallsQueryBuilderCorrectlyWithMultipleArgs()
-    {
-        EloquentModelDestroyStub::destroy(1, 2, 3);
-    }
-
-    public function testDestroyMethodCallsQueryBuilderCorrectlyWithEmptyIds()
-    {
-        $count = EloquentModelEmptyDestroyStub::destroy([]);
-        $this->assertSame(0, $count);
-    }
-
-    public function testWithMethodCallsQueryBuilderCorrectly()
-    {
-        $result = EloquentModelWithStub::with('foo', 'bar');
-        $this->assertSame('foo', $result);
-    }
-
     public function testWithoutMethodRemovesEagerLoadedRelationshipCorrectly()
     {
         $model = new EloquentModelWithoutRelationStub;
@@ -854,50 +622,6 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertSame('select "diaa", "fares"', $builder->toSql());
     }
 
-    public function testWithMethodCallsQueryBuilderCorrectlyWithArray()
-    {
-        $result = EloquentModelWithStub::with(['foo', 'bar']);
-        $this->assertSame('foo', $result);
-    }
-
-    public function testUpdateProcess()
-    {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps'])->getMock();
-        $query = Mockery::mock(Builder::class);
-        $query->expects('where')->with('id', '=', 1);
-        $query->expects('update')->with(['name' => 'taylor'])->andReturn(1);
-        $model->expects($this->once())->method('newModelQuery')->willReturn($query);
-        $model->expects($this->once())->method('updateTimestamps');
-        $events = $this->recordEvents();
-
-        $model->id = 1;
-        $model->foo = 'bar';
-        // make sure foo isn't synced so we can test that dirty attributes only are updated
-        $model->syncOriginal();
-        $model->name = 'taylor';
-        $model->exists = true;
-        $this->assertTrue($model->save());
-        $this->assertSame(['eloquent.saving', 'eloquent.updating', 'eloquent.updated', 'eloquent.saved'], $events->getArrayCopy());
-    }
-
-    public function testUpdateProcessDoesntOverrideTimestamps()
-    {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery'])->getMock();
-        $query = Mockery::mock(Builder::class);
-        $query->expects('where')->with('id', '=', 1);
-        $query->expects('update')->with(['created_at' => 'foo', 'updated_at' => 'bar'])->andReturn(1);
-        $model->expects($this->once())->method('newModelQuery')->willReturn($query);
-        $events = $this->recordEvents();
-
-        $model->id = 1;
-        $model->syncOriginal();
-        $model->created_at = 'foo';
-        $model->updated_at = 'bar';
-        $model->exists = true;
-        $this->assertTrue($model->save());
-        $this->assertSame(['eloquent.saving', 'eloquent.updating', 'eloquent.updated', 'eloquent.saved'], $events->getArrayCopy());
-    }
-
     public function testSaveIsCanceledIfSavingEventReturnsFalse()
     {
         $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery'])->getMock();
@@ -938,44 +662,7 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertFalse($model->save());
     }
 
-    public function testUpdateProcessWithoutTimestamps()
-    {
-        $model = $this->getMockBuilder(EloquentModelEventObjectStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'fireModelEvent'])->getMock();
-        $model->timestamps = false;
-        $query = Mockery::mock(Builder::class);
-        $query->expects('where')->with('id', '=', 1);
-        $query->expects('update')->with(['name' => 'taylor'])->andReturn(1);
-        $model->expects($this->once())->method('newModelQuery')->willReturn($query);
-        $model->expects($this->never())->method('updateTimestamps');
-        $model->method('fireModelEvent')->willReturn(true);
-
-        $model->id = 1;
-        $model->syncOriginal();
-        $model->name = 'taylor';
-        $model->exists = true;
-        $this->assertTrue($model->save());
-    }
-
-    public function testUpdateUsesOldPrimaryKey()
-    {
-        $model = $this->getMockBuilder(EloquentModelStub::class)->onlyMethods(['newModelQuery', 'updateTimestamps'])->getMock();
-        $query = Mockery::mock(Builder::class);
-        $query->expects('where')->with('id', '=', 1);
-        $query->expects('update')->with(['id' => 2, 'foo' => 'bar'])->andReturn(1);
-        $model->expects($this->once())->method('newModelQuery')->willReturn($query);
-        $model->expects($this->once())->method('updateTimestamps');
-        $events = $this->recordEvents();
-
-        $model->id = 1;
-        $model->syncOriginal();
-        $model->id = 2;
-        $model->foo = 'bar';
-        $model->exists = true;
-
-        $this->assertTrue($model->save());
-        $this->assertSame(['eloquent.saving', 'eloquent.updating', 'eloquent.updated', 'eloquent.saved'], $events->getArrayCopy());
-    }
-
+    #[AllowMockObjectsWithoutExpectations]
     public function testTimestampsAreReturnedAsObjects()
     {
         $model = $this->getMockBuilder(EloquentDateModelStub::class)->onlyMethods(['getDateFormat'])->getMock();
@@ -989,6 +676,7 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertInstanceOf(Carbon::class, $model->updated_at);
     }
 
+    #[AllowMockObjectsWithoutExpectations]
     public function testTimestampsAreReturnedAsObjectsFromPlainDatesAndTimestamps()
     {
         $model = $this->getMockBuilder(EloquentDateModelStub::class)->onlyMethods(['getDateFormat'])->getMock();
@@ -1080,6 +768,7 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertNull($model->fromDateTime(null));
     }
 
+    #[AllowMockObjectsWithoutExpectations]
     public function testFromDateTimeMilliseconds()
     {
         $model = $this->getMockBuilder('Illuminate\Tests\Database\EloquentDateModelStub')->onlyMethods(['getDateFormat'])->getMock();
@@ -1201,19 +890,6 @@ class DatabaseEloquentModelTest extends TestCase
         $model = new EloquentModelStub;
         $model->exists = true;
         $model->saveOrIgnore();
-    }
-
-    public function testDeleteProperlyDeletesModel()
-    {
-        $model = $this->getMockBuilder(Model::class)->onlyMethods(['newModelQuery', 'updateTimestamps', 'touchOwners'])->getMock();
-        $query = Mockery::mock(Builder::class);
-        $query->expects('where')->with('id', '=', 1)->andReturn($query);
-        $query->expects('delete');
-        $model->expects($this->once())->method('newModelQuery')->willReturn($query);
-        $model->expects($this->once())->method('touchOwners');
-        $model->exists = true;
-        $model->id = 1;
-        $model->delete();
     }
 
     public function testPushNoRelations()
@@ -1355,7 +1031,7 @@ class DatabaseEloquentModelTest extends TestCase
     #[TestWith([ConnectionNameBacked::Foo])]
     public function testConnectionEnums(string|\UnitEnum $connectionName)
     {
-        $resolver = Mockery::mock(ConnectionResolverInterface::class);
+        $resolver = Double::for(ConnectionResolverInterface::class);
         EloquentModelStub::setConnectionResolver($resolver);
         $model = new EloquentModelStub;
 
@@ -1363,7 +1039,7 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertEquals($retval, $model);
         $this->assertSame('Foo', $model->getConnectionName());
 
-        $resolver->expects('connection')->with('Foo')->andReturn('bar');
+        $resolver->expects('connection')->with('Foo')->returns('bar');
 
         $this->assertSame('bar', $model->getConnection());
     }
@@ -1729,6 +1405,72 @@ class DatabaseEloquentModelTest extends TestCase
         );
     }
 
+    public function testFillingJSONAttributesKeepsUnsavedChangesOnCastObjects()
+    {
+        $model = new EloquentModelCastingStub;
+        $model->setRawAttributes([
+            'asarrayobjectAttribute' => '{"foo":"bar"}',
+            'ascollectionAttribute' => '{"foo":"bar"}',
+            'asFluentAttribute' => '{"foo":"bar"}',
+        ]);
+
+        $model->asarrayobjectAttribute['foo'] = 'baz';
+        $model->ascollectionAttribute->put('foo', 'baz');
+        $model->asFluentAttribute->foo = 'baz';
+
+        $model->forceFill([
+            'asarrayobjectAttribute->bar' => 'qux',
+            'ascollectionAttribute->bar' => 'qux',
+            'asFluentAttribute->bar' => 'qux',
+        ]);
+
+        $this->assertSame(['foo' => 'baz', 'bar' => 'qux'], $model->asarrayobjectAttribute->getArrayCopy());
+        $this->assertSame(['foo' => 'baz', 'bar' => 'qux'], $model->ascollectionAttribute->all());
+        $this->assertSame(['foo' => 'baz', 'bar' => 'qux'], $model->asFluentAttribute->toArray());
+    }
+
+    public function testFillingJSONAttributesRefreshesObjectsCachedByAttributeAccessors()
+    {
+        $model = new class extends Model
+        {
+            protected function settings(): Attribute
+            {
+                return Attribute::make(
+                    get: fn ($value) => new Fluent(json_decode($value, true)),
+                    set: fn ($value) => json_encode($value),
+                );
+            }
+        };
+
+        $model->setRawAttributes(['settings' => '{"theme":"light"}'], true);
+
+        $this->assertSame('light', $model->settings->theme);
+
+        $model->forceFill(['settings->theme' => 'dark']);
+
+        $this->assertSame('dark', $model->settings->theme);
+        $this->assertSame(['settings' => '{"theme":"dark"}'], $model->getDirty());
+    }
+
+    public function testSettingAttributesRefreshesObjectsCachedByGetOnlyAttributeAccessors()
+    {
+        $model = new class extends Model
+        {
+            protected function settings(): Attribute
+            {
+                return Attribute::get(fn ($value) => new Fluent(json_decode($value, true)));
+            }
+        };
+
+        $model->setRawAttributes(['settings' => '{"theme":"light"}'], true);
+
+        $this->assertSame('light', $model->settings->theme);
+
+        $model->settings = '{"theme":"dark"}';
+
+        $this->assertSame('dark', $model->settings->theme);
+    }
+
     public function testUnguardAllowsAnythingToBeSet()
     {
         $model = new EloquentModelStub;
@@ -1751,9 +1493,11 @@ class DatabaseEloquentModelTest extends TestCase
     {
         $model = new EloquentModelStub;
 
-        $connection = Mockery::mock(Connection::class);
+        $connection = Double::for(Connection::class);
         EloquentModelStub::setConnectionResolver($this->newResolver(['default' => $connection]));
-        $connection->shouldReceive('getSchemaBuilder->getColumnListing')->andReturn(['name', 'age', 'foo']);
+        $schemaBuilder = Double::for(SchemaBuilder::class);
+        $schemaBuilder->expects('getColumnListing')->returns(['name', 'age', 'foo']);
+        $connection->expects('getSchemaBuilder')->returns($schemaBuilder);
 
         $model->guard(['name', 'age']);
         $model->fill(['name' => 'foo', 'age' => 'bar', 'foo' => 'bar']);
@@ -1783,9 +1527,8 @@ class DatabaseEloquentModelTest extends TestCase
         $model = new EloquentModelStub;
         $model::unguard();
 
-        $connection = Mockery::mock(Connection::class);
+        $connection = Double::for(Connection::class);
         EloquentModelStub::setConnectionResolver($this->newResolver(['default' => $connection]));
-        $connection->shouldReceive('getSchemaBuilder->getColumnListing')->andReturn(['name', 'age', 'foo']);
 
         $model->guard([]);
         $model->fillable(['name']);
@@ -1801,9 +1544,8 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testUsesOverriddenHandlerWhenDiscardingAttributes()
     {
-        $connection = Mockery::mock(Connection::class);
+        $connection = Double::for(Connection::class);
         EloquentModelStub::setConnectionResolver($this->newResolver(['default' => $connection]));
-        $connection->shouldReceive('getSchemaBuilder->getColumnListing')->andReturn(['name', 'age', 'foo']);
 
         Model::preventSilentlyDiscardingAttributes();
 
@@ -2249,10 +1991,10 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testModelObserversCanBeAttachedToModels()
     {
-        $events = Mockery::mock(Dispatcher::class);
+        $events = Double::for(Dispatcher::class);
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelStub', EloquentTestObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelStub', EloquentTestObserverStub::class.'@saved');
-        $events->shouldReceive('forget');
+        $events->allows('forget');
         EloquentModelStub::setEventDispatcher($events);
         EloquentModelStub::observe(new EloquentTestObserverStub);
         EloquentModelStub::flushEventListeners();
@@ -2260,10 +2002,10 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testModelObserversCanBeAttachedToModelsWithString()
     {
-        $events = Mockery::mock(Dispatcher::class);
+        $events = Double::for(Dispatcher::class);
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelStub', EloquentTestObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelStub', EloquentTestObserverStub::class.'@saved');
-        $events->shouldReceive('forget');
+        $events->allows('forget');
         EloquentModelStub::setEventDispatcher($events);
         EloquentModelStub::observe(EloquentTestObserverStub::class);
         EloquentModelStub::flushEventListeners();
@@ -2271,10 +2013,10 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testModelObserversCanBeAttachedToModelsThroughAnArray()
     {
-        $events = Mockery::mock(Dispatcher::class);
+        $events = Double::for(Dispatcher::class);
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelStub', EloquentTestObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelStub', EloquentTestObserverStub::class.'@saved');
-        $events->shouldReceive('forget');
+        $events->allows('forget');
         EloquentModelStub::setEventDispatcher($events);
         EloquentModelStub::observe([EloquentTestObserverStub::class]);
         EloquentModelStub::flushEventListeners();
@@ -2282,29 +2024,29 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testModelObserversCanBeAttachedToModelsWithStringUsingAttribute()
     {
-        $events = Mockery::mock(Dispatcher::class);
+        $events = Double::for(Dispatcher::class);
         $events->expects('dispatch')->times(2);
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelWithObserveAttributeStub', EloquentTestObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelWithObserveAttributeStub', EloquentTestObserverStub::class.'@saved');
-        $events->shouldReceive('forget');
+        $events->allows('forget');
         EloquentModelWithObserveAttributeStub::setEventDispatcher($events);
         EloquentModelWithObserveAttributeStub::flushEventListeners();
     }
 
     public function testModelObserversCanBeAttachedToModelsThroughAnArrayUsingAttribute()
     {
-        $events = Mockery::mock(Dispatcher::class);
+        $events = Double::for(Dispatcher::class);
         $events->expects('dispatch')->times(2);
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelWithObserveAttributeUsingArrayStub', EloquentTestObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelWithObserveAttributeUsingArrayStub', EloquentTestObserverStub::class.'@saved');
-        $events->shouldReceive('forget');
+        $events->allows('forget');
         EloquentModelWithObserveAttributeUsingArrayStub::setEventDispatcher($events);
         EloquentModelWithObserveAttributeUsingArrayStub::flushEventListeners();
     }
 
     public function testModelObserversCanBeAttachedToModelsThroughAttributesOnParentClasses()
     {
-        $events = Mockery::mock(Dispatcher::class);
+        $events = Double::for(Dispatcher::class);
         $events->expects('dispatch')->times(2);
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelWithObserveAttributeGrandchildStub', EloquentTestObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelWithObserveAttributeGrandchildStub', EloquentTestObserverStub::class.'@saved');
@@ -2312,7 +2054,7 @@ class DatabaseEloquentModelTest extends TestCase
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelWithObserveAttributeGrandchildStub', EloquentTestAnotherObserverStub::class.'@saved');
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelWithObserveAttributeGrandchildStub', EloquentTestThirdObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelWithObserveAttributeGrandchildStub', EloquentTestThirdObserverStub::class.'@saved');
-        $events->shouldReceive('forget');
+        $events->allows('forget');
         EloquentModelWithObserveAttributeGrandchildStub::setEventDispatcher($events);
         EloquentModelWithObserveAttributeGrandchildStub::flushEventListeners();
     }
@@ -2331,7 +2073,7 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testModelObserversCanBeAttachedToModelsThroughCallingObserveMethodOnlyOnce()
     {
-        $events = Mockery::mock(Dispatcher::class);
+        $events = Double::for(Dispatcher::class);
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelStub', EloquentTestObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelStub', EloquentTestObserverStub::class.'@saved');
         EloquentModelStub::setEventDispatcher($events);
@@ -2339,7 +2081,7 @@ class DatabaseEloquentModelTest extends TestCase
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelStub', EloquentTestAnotherObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelStub', EloquentTestAnotherObserverStub::class.'@saved');
 
-        $events->shouldReceive('forget');
+        $events->allows('forget');
 
         EloquentModelStub::observe([
             EloquentTestObserverStub::class,
@@ -2354,13 +2096,13 @@ class DatabaseEloquentModelTest extends TestCase
         // Boot the model before the dispatcher is set so booting events aren't dispatched.
         new EloquentModelSaveStub;
 
-        $events = Mockery::mock(Dispatcher::class);
+        $events = Double::for(Dispatcher::class);
         $events->expects('listen')->with('eloquent.creating: Illuminate\Tests\Database\EloquentModelSaveStub', EloquentTestObserverStub::class.'@creating');
         $events->expects('listen')->with('eloquent.saved: Illuminate\Tests\Database\EloquentModelSaveStub', EloquentTestObserverStub::class.'@saved');
         EloquentModelSaveStub::setEventDispatcher($events);
-        $events->shouldNotReceive('until');
-        $events->shouldNotReceive('dispatch');
-        $events->shouldReceive('forget');
+        $events->expects('until')->never();
+        $events->expects('dispatch')->never();
+        $events->allows('forget');
         EloquentModelSaveStub::observe(EloquentTestObserverStub::class);
 
         $model = EloquentModelSaveStub::withoutEvents(function () {
@@ -2618,314 +2360,6 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertNull($replicated->updated_at);
     }
 
-    public function testIncrementOnExistingModelCallsQueryAndSetsAttribute()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 2;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->times(2)->andReturn($query);
-        $query->expects('where')->times(2)->andReturn($query);
-        $query->expects('increment')->times(2);
-
-        // hmm
-        $model->publicIncrement('foo', 1);
-        $this->assertFalse($model->isDirty());
-
-        $model->publicIncrement('foo', 1, ['category' => 1]);
-        $this->assertEquals(4, $model->foo);
-        $this->assertEquals(1, $model->category);
-        $this->assertTrue($model->isDirty('category'));
-    }
-
-    public function testIncrementQuietlyOnExistingModelCallsQueryAndSetsAttributeAndIsQuiet()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 2;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->times(2)->andReturn($query);
-        $query->expects('where')->times(2)->andReturn($query);
-        $query->expects('increment')->times(2);
-
-        $events = $this->recordEvents();
-
-        $model->publicIncrementQuietly('foo', 1);
-        $this->assertFalse($model->isDirty());
-
-        $model->publicIncrementQuietly('foo', 1, ['category' => 1]);
-        $this->assertEquals(4, $model->foo);
-        $this->assertEquals(1, $model->category);
-        $this->assertTrue($model->isDirty('category'));
-        $this->assertSame([], $events->getArrayCopy());
-    }
-
-    public function testDecrementQuietlyOnExistingModelCallsQueryAndSetsAttributeAndIsQuiet()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 4;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->times(2)->andReturn($query);
-        $query->expects('where')->times(2)->andReturn($query);
-        $query->expects('decrement')->times(2);
-
-        $events = $this->recordEvents();
-
-        $model->publicDecrementQuietly('foo', 1);
-        $this->assertFalse($model->isDirty());
-
-        $model->publicDecrementQuietly('foo', 1, ['category' => 1]);
-        $this->assertEquals(2, $model->foo);
-        $this->assertEquals(1, $model->category);
-        $this->assertTrue($model->isDirty('category'));
-        $this->assertSame([], $events->getArrayCopy());
-    }
-
-    public function testIncrementEachOnExistingModelScopesQueryToModelKey()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 2;
-        $model->bar = 5;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->andReturn($query);
-        $query->expects('where')->with('id', '=', 1)->andReturn($query);
-        $query->expects('incrementEach')->with(['foo' => 1, 'bar' => 2], [])->andReturn(1);
-
-        $result = $model->publicIncrementEach(['foo' => 1, 'bar' => 2]);
-
-        $this->assertEquals(1, $result);
-        $this->assertEquals(3, $model->foo);
-        $this->assertEquals(7, $model->bar);
-    }
-
-    public function testDecrementEachOnExistingModelScopesQueryToModelKey()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 10;
-        $model->bar = 5;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->andReturn($query);
-        $query->expects('where')->with('id', '=', 1)->andReturn($query);
-        $query->expects('decrementEach')->with(['foo' => 3, 'bar' => 2], [])->andReturn(1);
-
-        $result = $model->publicDecrementEach(['foo' => 3, 'bar' => 2]);
-
-        $this->assertEquals(1, $result);
-        $this->assertEquals(7, $model->foo);
-        $this->assertEquals(3, $model->bar);
-    }
-
-    public function testIncrementEachQuietlyOnExistingModelCallsQueryAndSetsAttributeAndIsQuiet()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 2;
-        $model->bar = 5;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->times(2)->andReturn($query);
-        $query->expects('where')->times(2)->andReturn($query);
-        $query->expects('incrementEach')->times(2);
-
-        $events = $this->recordEvents();
-
-        $model->publicIncrementEachQuietly(['foo' => 1, 'bar' => 2]);
-        $this->assertEquals(3, $model->foo);
-        $this->assertEquals(7, $model->bar);
-        $this->assertFalse($model->isDirty());
-
-        $model->publicIncrementEachQuietly(['foo' => 1], ['category' => 1]);
-        $this->assertEquals(4, $model->foo);
-        $this->assertEquals(1, $model->category);
-        $this->assertTrue($model->isDirty('category'));
-        $this->assertSame([], $events->getArrayCopy());
-    }
-
-    public function testDecrementEachQuietlyOnExistingModelCallsQueryAndSetsAttributeAndIsQuiet()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 10;
-        $model->bar = 5;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->times(2)->andReturn($query);
-        $query->expects('where')->times(2)->andReturn($query);
-        $query->expects('decrementEach')->times(2);
-
-        $events = $this->recordEvents();
-
-        $model->publicDecrementEachQuietly(['foo' => 3, 'bar' => 2]);
-        $this->assertEquals(7, $model->foo);
-        $this->assertEquals(3, $model->bar);
-        $this->assertFalse($model->isDirty());
-
-        $model->publicDecrementEachQuietly(['foo' => 1], ['category' => 1]);
-        $this->assertEquals(6, $model->foo);
-        $this->assertEquals(1, $model->category);
-        $this->assertTrue($model->isDirty('category'));
-        $this->assertSame([], $events->getArrayCopy());
-    }
-
-    public function testIncrementEachQuietlyCanBeCalledDynamicallyOnModelInstance()
-    {
-        $model = new EloquentModelDynamicIncrementEachStub(['foo' => 2, 'bar' => 5]);
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-
-        // Called dynamically (the method is protected) so it routes through Model::__call.
-        $model->incrementEachQuietly(['foo' => 1, 'bar' => 2]);
-
-        $this->assertSame('incrementEach', $model->queryStub->called);
-        $this->assertEquals(3, $model->foo);
-        $this->assertEquals(7, $model->bar);
-    }
-
-    public function testDecrementEachQuietlyCanBeCalledDynamicallyOnModelInstance()
-    {
-        $model = new EloquentModelDynamicIncrementEachStub(['foo' => 5, 'bar' => 10]);
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-
-        // Called dynamically (the method is protected) so it routes through Model::__call.
-        $model->decrementEachQuietly(['foo' => 1, 'bar' => 2]);
-
-        $this->assertSame('decrementEach', $model->queryStub->called);
-        $this->assertEquals(4, $model->foo);
-        $this->assertEquals(8, $model->bar);
-    }
-
-    public function testIncrementEachWithExtraColumnsOnExistingModel()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 2;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->andReturn($query);
-        $query->expects('where')->with('id', '=', 1)->andReturn($query);
-        $query->expects('incrementEach')->with(['foo' => 5], ['category' => 'test'])->andReturn(1);
-
-        $result = $model->publicIncrementEach(['foo' => 5], ['category' => 'test']);
-
-        $this->assertEquals(1, $result);
-        $this->assertEquals(7, $model->foo);
-        $this->assertSame('test', $model->category);
-    }
-
-    public function testIncrementEachFiresModelEvents()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 1;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutScopes')->andReturn($query);
-        $query->expects('where')->andReturn($query);
-        $query->expects('incrementEach')->andReturn(1);
-
-        $events = $this->recordEvents();
-
-        $model->publicIncrementEach(['foo' => 1]);
-        $this->assertSame(['eloquent.updating', 'eloquent.updated'], $events->getArrayCopy());
-    }
-
-    public function testIncrementEachReturnsFalseWhenUpdatingEventCancelled()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutScopes]');
-        $model->exists = true;
-        $model->id = 1;
-        $model->syncOriginalAttribute('id');
-        $model->foo = 1;
-
-        $model->shouldReceive('newQueryWithoutScopes')->never();
-
-        $events = new EventDispatcher;
-        $events->listen('eloquent.updating: '.get_class($model), fn () => false);
-        $model::setEventDispatcher($events);
-
-        $result = $model->publicIncrementEach(['foo' => 1]);
-
-        $this->assertFalse($result);
-        // Note: attributes are set before the event fires, matching increment() behavior.
-        // The in-memory value changes but the database is not updated.
-        $this->assertEquals(2, $model->foo);
-    }
-
-    public function testIncrementEachOnNonExistingModelForwardsToQueryBuilder()
-    {
-        $model = Mockery::mock(EloquentModelStub::class.'[newQueryWithoutRelationships]');
-        $model->exists = false;
-
-        $query = Mockery::mock(Builder::class);
-        $model->expects('newQueryWithoutRelationships')->andReturn($query);
-        $query->expects('incrementEach')->with(['foo' => 1], [])->andReturn(5);
-
-        $result = $model->publicIncrementEach(['foo' => 1]);
-
-        $this->assertEquals(5, $result);
-    }
-
-    public function testRelationshipTouchOwnersIsPropagated()
-    {
-        $relation = $this->getMockBuilder(BelongsTo::class)->onlyMethods(['touch'])->disableOriginalConstructor()->getMock();
-        $relation->expects($this->once())->method('touch');
-
-        $model = Mockery::mock(EloquentModelStub::class.'[partner]');
-        $this->addMockConnection($model);
-        $model->expects('partner')->andReturn($relation);
-        $model->setTouchedRelations(['partner']);
-
-        $mockPartnerModel = Mockery::mock(EloquentModelStub::class.'[touchOwners]');
-        $mockPartnerModel->expects('touchOwners');
-        $model->setRelation('partner', $mockPartnerModel);
-
-        $model->touchOwners();
-    }
-
-    public function testRelationshipTouchOwnersIsNotPropagatedIfNoRelationshipResult()
-    {
-        $relation = $this->getMockBuilder(BelongsTo::class)->onlyMethods(['touch'])->disableOriginalConstructor()->getMock();
-        $relation->expects($this->once())->method('touch');
-
-        $model = Mockery::mock(EloquentModelStub::class.'[partner]');
-        $this->addMockConnection($model);
-        $model->expects('partner')->andReturn($relation);
-        $model->setTouchedRelations(['partner']);
-
-        $model->setRelation('partner', null);
-
-        $model->touchOwners();
-    }
-
     public function testModelAttributesAreCastedWhenPresentInCastsPropertyOrCastsMethod()
     {
         $model = new EloquentModelCastingStub;
@@ -3094,6 +2528,22 @@ class DatabaseEloquentModelTest extends TestCase
         $model->getAttributes();
     }
 
+    public function testModelJsonPathCastingFailsOnUnencodableData()
+    {
+        $model = new EloquentModelCastingStub;
+        $model->jsonAttribute = ['theme' => 'dark'];
+
+        try {
+            $model->{'jsonAttribute->name'} = "b\xF8r";
+
+            $this->fail('JsonEncodingException was not thrown.');
+        } catch (JsonEncodingException $e) {
+            $this->assertSame('Unable to encode attribute [jsonAttribute] for model [Illuminate\Tests\Database\EloquentModelCastingStub] to JSON: Malformed UTF-8 characters, possibly incorrectly encoded.', $e->getMessage());
+        }
+
+        $this->assertSame(['theme' => 'dark'], $model->jsonAttribute);
+    }
+
     public function testModelAttributeCastingFailsOnUnencodableDataWithUnicode()
     {
         $this->expectExceptionObject(new JsonEncodingException('Unable to encode attribute [jsonAttributeWithUnicode] for model [Illuminate\Tests\Database\EloquentModelCastingStub] to JSON: Malformed UTF-8 characters, possibly incorrectly encoded.'));
@@ -3102,6 +2552,19 @@ class DatabaseEloquentModelTest extends TestCase
         $model->jsonAttributeWithUnicode = ['foo' => "b\xF8r"];
 
         $model->getAttributes();
+    }
+
+    #[TestWith(['asarrayobjectAttribute'])]
+    #[TestWith(['ascollectionAttribute'])]
+    #[TestWith(['asFluentAttribute'])]
+    #[TestWith(['asEncryptedArrayObjectAttribute'])]
+    #[TestWith(['asEncryptedCollectionAttribute'])]
+    public function testObjectCastsFailOnUnencodableData(string $attribute)
+    {
+        $this->expectExceptionObject(new JsonEncodingException("Unable to encode attribute [{$attribute}] for model [Illuminate\\Tests\\Database\\EloquentModelCastingStub] to JSON: Malformed UTF-8 characters, possibly incorrectly encoded."));
+
+        $model = new EloquentModelCastingStub;
+        $model->{$attribute} = ['foo' => "b\xF8r"];
     }
 
     public function testJsonCastingRespectsUnicodeOption()
@@ -3212,10 +2675,10 @@ class DatabaseEloquentModelTest extends TestCase
 
     public function testNonExistingAttributeWithInternalMethodNameDoesntCallMethod()
     {
-        $model = Mockery::mock(EloquentModelStub::class.'[delete,getRelationValue]');
+        $model = Double::for(EloquentModelStub::class)->passthru();
         $model->name = 'Spark';
-        $model->shouldNotReceive('delete');
-        $model->expects('getRelationValue')->with('belongsToStub')->andReturn('relation');
+        $model->expects('delete')->never();
+        $model->expects('getRelationValue')->with('belongsToStub')->returns('relation');
 
         // Can return a normal relation
         $this->assertSame('relation', $model->belongsToStub);
@@ -3226,7 +2689,7 @@ class DatabaseEloquentModelTest extends TestCase
         // Returns null for a Model.php method name
         $this->assertNull($model->delete);
 
-        $model = Mockery::mock(EloquentModelStub::class.'[delete]');
+        $model = Double::for(EloquentModelStub::class)->passthru();
         $model->delete = 123;
         $this->assertEquals(123, $model->delete);
     }
@@ -3497,15 +2960,15 @@ class DatabaseEloquentModelTest extends TestCase
 
     protected function addMockConnection($model)
     {
-        $resolver = Mockery::mock(ConnectionResolverInterface::class);
+        $resolver = Double::for(ConnectionResolverInterface::class);
         $model->setConnectionResolver($resolver);
-        $connection = Mockery::mock(Connection::class);
-        $resolver->shouldReceive('connection')->andReturn($connection);
+        $connection = Double::for(Connection::class);
+        $resolver->allows('connection')->returns($connection);
         $grammar = new Grammar($connection);
-        $connection->shouldReceive('getQueryGrammar')->andReturn($grammar);
+        $connection->allows('getQueryGrammar')->returns($grammar);
         $processor = new Processor;
-        $connection->shouldReceive('getPostProcessor')->andReturn($processor);
-        $connection->shouldReceive('query')->andReturnUsing(function () use ($connection, $grammar, $processor) {
+        $connection->allows('getPostProcessor')->returns($processor);
+        $connection->allows('query')->resolves(function () use ($connection, $grammar, $processor) {
             return new BaseBuilder($connection, $grammar, $processor);
         });
     }
@@ -3514,8 +2977,8 @@ class DatabaseEloquentModelTest extends TestCase
     {
         Carbon::setTestNow($now = Carbon::now());
 
-        $model = Mockery::mock(EloquentModelStub::class.'[save]');
-        $model->expects('save')->andReturn(true);
+        $model = Double::for(EloquentModelStub::class)->passthru();
+        $model->expects('save')->returns(true);
 
         $result = $model->touch(['published_at', 'verified_at']);
 
@@ -3816,6 +3279,39 @@ class DatabaseEloquentModelTest extends TestCase
         $this->assertSame('Anytown', $model->address_line_two);
     }
 
+    public function testGuardedAttributesCannotBeBypassed()
+    {
+        // Test that guarded attributes with set-mutators cannot be bypassed
+        // via alternate spellings (e.g., 'is-admin' vs 'is_admin', 'ro-le' vs 'role')
+        // This addresses the vulnerability where normalized key paths (Str::studly/camel)
+        // could bypass literal guard comparisons.
+        $model = new GuardedAttributeTestModel;
+
+        $connection = Double::for(Connection::class);
+        GuardedAttributeTestModel::setConnectionResolver($this->newResolver(['default' => $connection]));
+        $schemaBuilder = Double::for(SchemaBuilder::class);
+        $schemaBuilder->allows('getColumnListing')->returns(['id', 'is_admin', 'role', 'name']);
+        $connection->allows('getSchemaBuilder')->returns($schemaBuilder);
+
+        // Test: attempt to bypass guard using hyphenated spelling of 'is_admin' (classic mutator)
+        $model->fill(['is-admin' => true, 'name' => 'Test User']);
+        $this->assertFalse($model->is_admin, 'Guarded attribute (classic mutator) with hyphen spelling should not be fillable');
+        $this->assertSame('Test User', $model->name, 'Non-guarded attributes should still be fillable');
+
+        // Test: attempt to bypass guard using hyphenated spelling of 'role' (Attribute mutator)
+        $model = new GuardedAttributeTestModel;
+        $model->fill(['ro-le' => 'admin', 'name' => 'Test User']);
+        $this->assertNull($model->role, 'Guarded attribute (Attribute mutator) with hyphen spelling should not be fillable');
+        $this->assertSame('Test User', $model->name, 'Non-guarded attributes should work');
+
+        // Test: control - exact guarded keys should also be blocked
+        $model = new GuardedAttributeTestModel;
+        $model->fill(['is_admin' => true, 'role' => 'admin', 'name' => 'Test User']);
+        $this->assertFalse($model->is_admin, 'Exact guarded key (classic mutator) should be protected');
+        $this->assertNull($model->role, 'Exact guarded key (Attribute mutator) should be protected');
+        $this->assertSame('Test User', $model->name, 'Non-guarded attributes should work');
+    }
+
     public function testCollectedByAttribute()
     {
         $model = new EloquentModelWithCollectedByAttribute;
@@ -3925,6 +3421,66 @@ class DatabaseEloquentModelTest extends TestCase
         $model = new EloquentModelInheritingRouteKeyAttributeStub;
 
         $this->assertSame('slug', $model->getRouteKeyName());
+    }
+
+    public function testDefaultsMethodSetsDefaultAttributeValues()
+    {
+        $model = new EloquentModelWithDefaultsMethodStub;
+
+        $this->assertSame(['status' => 'draft', 'views' => 0], $model->getAttributes());
+        $this->assertFalse($model->isDirty());
+    }
+
+    public function testDefaultsMethodTakesPrecedenceOverAttributesProperty()
+    {
+        $model = new EloquentModelWithDefaultsMethodAndPropertyStub;
+
+        $this->assertSame(['title' => 'Untitled', 'status' => 'draft'], $model->getAttributes());
+    }
+
+    public function testDefaultsMethodValuesMayBeOverriddenOnInstantiation()
+    {
+        $model = new EloquentModelWithDefaultsMethodStub(['status' => 'published']);
+
+        $this->assertSame(['status' => 'published', 'views' => 0], $model->getAttributes());
+    }
+
+    public function testDefaultsMethodIsNotAppliedToExistingModels()
+    {
+        $model = (new EloquentModelWithDefaultsMethodStub)->newFromBuilder(['status' => 'published']);
+
+        $this->assertSame(['status' => 'published'], $model->getAttributes());
+        $this->assertFalse($model->isDirty());
+    }
+
+    public function testDefaultsMethodIsNotReappliedWhenUnserializing()
+    {
+        $model = new EloquentModelWithDefaultsMethodStub(['status' => 'published']);
+
+        $model = unserialize(serialize($model));
+
+        $this->assertSame(['status' => 'published', 'views' => 0], $model->getAttributes());
+    }
+
+    public function testDefaultsMethodIsEvaluatedForEachNewModel()
+    {
+        EloquentModelWithRuntimeDefaultsStub::$trialDays = 14;
+
+        $this->assertSame(['trial_days' => 14], (new EloquentModelWithRuntimeDefaultsStub)->getAttributes());
+
+        EloquentModelWithRuntimeDefaultsStub::$trialDays = 30;
+
+        $this->assertSame(['trial_days' => 30], (new EloquentModelWithRuntimeDefaultsStub)->getAttributes());
+    }
+
+    public function testDefaultsMethodIsNotCalledUnlessTraitIsUsed()
+    {
+        EloquentModelWithDefaultsMethodWithoutTraitStub::$called = 0;
+
+        $model = new EloquentModelWithDefaultsMethodWithoutTraitStub;
+
+        $this->assertSame(0, EloquentModelWithDefaultsMethodWithoutTraitStub::$called);
+        $this->assertSame([], $model->getAttributes());
     }
 
     protected function newStubConnection(bool $unique = false): SQLiteConnection
@@ -4065,41 +3621,6 @@ class EloquentModelStub extends Model
         $this->attributes['password_hash'] = sha1($value);
     }
 
-    public function publicIncrement($column, $amount = 1, $extra = [])
-    {
-        return $this->increment($column, $amount, $extra);
-    }
-
-    public function publicIncrementQuietly($column, $amount = 1, $extra = [])
-    {
-        return $this->incrementQuietly($column, $amount, $extra);
-    }
-
-    public function publicDecrementQuietly($column, $amount = 1, $extra = [])
-    {
-        return $this->decrementQuietly($column, $amount, $extra);
-    }
-
-    public function publicIncrementEach(array $columns, array $extra = [])
-    {
-        return $this->incrementEach($columns, $extra);
-    }
-
-    public function publicDecrementEach(array $columns, array $extra = [])
-    {
-        return $this->decrementEach($columns, $extra);
-    }
-
-    public function publicIncrementEachQuietly(array $columns, array $extra = [])
-    {
-        return $this->incrementEachQuietly($columns, $extra);
-    }
-
-    public function publicDecrementEachQuietly(array $columns, array $extra = [])
-    {
-        return $this->decrementEachQuietly($columns, $extra);
-    }
-
     public function belongsToStub()
     {
         return $this->belongsTo(EloquentModelSaveStub::class);
@@ -4217,13 +3738,13 @@ class EloquentModelSaveStub extends Model
 
     public function getConnection()
     {
-        $mock = Mockery::mock(Connection::class);
+        $mock = Double::for(Connection::class);
         $grammar = new Grammar($mock);
-        $mock->shouldReceive('getQueryGrammar')->andReturn($grammar);
+        $mock->allows('getQueryGrammar')->returns($grammar);
         $processor = new Processor;
-        $mock->shouldReceive('getPostProcessor')->andReturn($processor);
-        $mock->shouldReceive('getName')->andReturn('name');
-        $mock->shouldReceive('query')->andReturnUsing(function () use ($mock, $grammar, $processor) {
+        $mock->allows('getPostProcessor')->returns($processor);
+        $mock->allows('getName')->returns('name');
+        $mock->allows('query')->resolves(function () use ($mock, $grammar, $processor) {
             return new BaseBuilder($mock, $grammar, $processor);
         });
 
@@ -4234,58 +3755,6 @@ class EloquentModelSaveStub extends Model
 class EloquentKeyTypeModelStub extends EloquentModelStub
 {
     protected $keyType = 'string';
-}
-
-class EloquentModelFindWithWritePdoStub extends Model
-{
-    public function newQuery()
-    {
-        $mock = Mockery::mock(Builder::class);
-        $mock->expects('useWritePdo')->andReturnSelf();
-        $mock->expects('find')->with(1)->andReturn('foo');
-
-        return $mock;
-    }
-}
-
-class EloquentModelDestroyStub extends Model
-{
-    protected $fillable = [
-        'id',
-    ];
-
-    public function newQuery()
-    {
-        $mock = Mockery::mock(Builder::class);
-        $mock->expects('whereIn')->with('id', [1, 2, 3])->andReturn($mock);
-        $model = Mockery::mock(Model::class);
-        $mock->expects('get')->andReturn([$model]);
-        $model->expects('delete');
-
-        return $mock;
-    }
-}
-
-class EloquentModelEmptyDestroyStub extends Model
-{
-    public function newQuery()
-    {
-        $mock = Mockery::mock(Builder::class);
-        $mock->shouldReceive('whereIn')->never();
-
-        return $mock;
-    }
-}
-
-class EloquentModelWithStub extends Model
-{
-    public function newQuery()
-    {
-        $mock = Mockery::mock(Builder::class);
-        $mock->expects('with')->with(['foo', 'bar'])->andReturn('foo');
-
-        return $mock;
-    }
 }
 
 class EloquentModelWithWhereHasStub extends Model
@@ -4963,59 +4432,6 @@ enum ConnectionNameBacked: string
     case Bar = 'Bar';
 }
 
-class EloquentModelDynamicIncrementEachStub extends Model
-{
-    protected $guarded = [];
-
-    public $queryStub;
-
-    public function __construct(array $attributes = [])
-    {
-        parent::__construct($attributes);
-
-        $this->queryStub = new EloquentModelIncrementEachQueryStub;
-    }
-
-    public function newQueryWithoutScopes()
-    {
-        return $this->queryStub;
-    }
-
-    public function newQuery()
-    {
-        return $this->queryStub;
-    }
-}
-
-class EloquentModelIncrementEachQueryStub
-{
-    public $called;
-
-    public function where()
-    {
-        return $this;
-    }
-
-    public function incrementEach($columns, $extra = [])
-    {
-        $this->called = 'incrementEach';
-
-        return 1;
-    }
-
-    public function decrementEach($columns, $extra = [])
-    {
-        $this->called = 'decrementEach';
-
-        return 1;
-    }
-
-    public function __call($name, $arguments)
-    {
-        throw new \BadMethodCallException($name);
-    }
-}
-
 #[RouteKey('slug')]
 class EloquentModelWithRouteKeyAttributeStub extends Model
 {
@@ -5025,4 +4441,78 @@ class EloquentModelWithRouteKeyAttributeStub extends Model
 class EloquentModelInheritingRouteKeyAttributeStub extends EloquentModelWithRouteKeyAttributeStub
 {
     //
+}
+
+class EloquentModelWithDefaultsMethodStub extends Model
+{
+    use HasDefaultAttributes;
+
+    protected $guarded = [];
+
+    protected function defaults(): array
+    {
+        return ['status' => 'draft', 'views' => 0];
+    }
+}
+
+class EloquentModelWithRuntimeDefaultsStub extends Model
+{
+    use HasDefaultAttributes;
+
+    public static $trialDays = 14;
+
+    protected function defaults(): array
+    {
+        return ['trial_days' => static::$trialDays];
+    }
+}
+
+class EloquentModelWithDefaultsMethodAndPropertyStub extends Model
+{
+    use HasDefaultAttributes;
+
+    protected $attributes = [
+        'title' => 'Untitled',
+        'status' => 'pending',
+    ];
+
+    protected function defaults(): array
+    {
+        return ['status' => 'draft'];
+    }
+}
+
+class EloquentModelWithDefaultsMethodWithoutTraitStub extends Model
+{
+    public static $called = 0;
+
+    protected function defaults(): array
+    {
+        static::$called++;
+
+        return ['status' => 'draft'];
+    }
+}
+
+class GuardedAttributeTestModel extends Model
+{
+    protected $guarded = ['is_admin', 'role'];
+
+    public $attributes = [
+        'is_admin' => false,
+        'role' => null,
+        'name' => null,
+    ];
+
+    public function setIsAdminAttribute($value)
+    {
+        $this->attributes['is_admin'] = (bool) $value;
+    }
+
+    protected function role(): Attribute
+    {
+        return Attribute::make(
+            set: fn ($value) => ['role' => (string) $value]
+        );
+    }
 }

@@ -13,6 +13,7 @@ use Illuminate\Contracts\Queue\Job as QueueJobContract;
 use Illuminate\Events\Dispatcher as EventsDispatcher;
 use Illuminate\Foundation\Exceptions\Handler;
 use Illuminate\Queue\CallQueuedHandler;
+use Illuminate\Queue\Events\JobAttempted;
 use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobInterrupted;
 use Illuminate\Queue\Events\JobPopped;
@@ -21,6 +22,7 @@ use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobReleased;
 use Illuminate\Queue\Events\JobReleasedAfterException;
+use Illuminate\Queue\Events\JobTimedOut;
 use Illuminate\Queue\Events\WorkerIdle;
 use Illuminate\Queue\Events\WorkerStarting;
 use Illuminate\Queue\Events\WorkerStopping;
@@ -32,12 +34,16 @@ use Illuminate\Queue\WorkerStopReason;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Testing\Fakes\EventFake;
 use Illuminate\Support\Testing\Fakes\ExceptionHandlerFake;
-use Mockery;
+use JMac\Testing\Double;
+use JMac\Testing\Integrations\PHPUnit\VerifiesDoubles;
+use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
 class QueueWorkerTest extends TestCase
 {
+    use VerifiesDoubles;
+
     public $events;
     public $exceptionHandler;
     public $maintenanceFlags;
@@ -192,6 +198,26 @@ class QueueWorkerTest extends TestCase
         $this->assertFalse($worker->memoryExceeded(-1));
     }
 
+    public function testWorkerMemoryExceededWhenMemoryIsAPercentage()
+    {
+        $worker = new class(...$this->workerDependencies()) extends Worker
+        {
+            protected function currentMemoryUsage()
+            {
+                return 512;
+            }
+        };
+
+        $original = ini_set('memory_limit', '1G');
+
+        try {
+            $this->assertTrue($worker->memoryExceeded('50%'));
+            $this->assertFalse($worker->memoryExceeded('51%'));
+        } finally {
+            ini_set('memory_limit', $original);
+        }
+    }
+
     public function testJobCanBeFiredBasedOnPriority()
     {
         $worker = $this->getWorker('default', [
@@ -250,6 +276,27 @@ class QueueWorkerTest extends TestCase
         $this->exceptionHandler->assertReported(fn (RuntimeException $reported) => $reported === $e);
         $this->events->assertDispatchedOnce(JobExceptionOccurred::class);
         $this->events->assertNotDispatched(JobProcessed::class);
+    }
+
+    public function testJobAttemptedEventIsDispatched()
+    {
+        $e = new RuntimeException;
+
+        $job = new WorkerFakeJob(function () use ($e) {
+            throw $e;
+        });
+
+        $worker = $this->getWorker('default', ['queue' => [$job]]);
+        $worker->runNextJob('default', 'queue', $this->workerOptions());
+
+        $this->events->assertDispatchedOnce(JobAttempted::class);
+        $this->events->assertDispatched(JobAttempted::class, function ($event) use ($job, $e) {
+            return $event->connectionName === 'default'
+                && $event->job === $job
+                && $event->exception === $e
+                && ! $event->successful()
+                && is_float($event->duration);
+        });
     }
 
     public function testJobIsFailedIfExceptionHandlerSaysItShouldntRetry()
@@ -762,8 +809,8 @@ class QueueWorkerTest extends TestCase
             }
         };
 
-        $handler = Mockery::mock(CallQueuedHandler::class);
-        $handler->expects('getRunningCommand')->andReturn($interruptible);
+        $handler = Double::for(CallQueuedHandler::class);
+        $handler->expects('getRunningCommand')->returns($interruptible);
 
         $worker = $this->getWorker('default', ['queue' => []]);
         $job = new WorkerFakeJob;
@@ -785,8 +832,8 @@ class QueueWorkerTest extends TestCase
             }
         };
 
-        $handler = Mockery::mock(CallQueuedHandler::class);
-        $handler->expects('getRunningCommand')->andReturn($interruptible);
+        $handler = Double::for(CallQueuedHandler::class);
+        $handler->expects('getRunningCommand')->returns($interruptible);
 
         $worker = $this->getWorker('default', ['queue' => []]);
         $job = new WorkerFakeJob;
@@ -802,6 +849,60 @@ class QueueWorkerTest extends TestCase
                 && $event->job === $job
                 && $event->signal === 15;
         });
+    }
+
+    #[RequiresPhpExtension('pcntl')]
+    public function testInterruptibleJobIsNotifiedWhenTheJobTimesOut()
+    {
+        $interruptible = new class implements Interruptible
+        {
+            public ?int $receivedSignal = null;
+
+            public function interrupted(int $signal): void
+            {
+                $this->receivedSignal = $signal;
+            }
+        };
+
+        $handler = Double::for(CallQueuedHandler::class);
+        $handler->expects('getRunningCommand')->returns($interruptible);
+
+        $worker = $this->getWorker('default', ['queue' => []]);
+        $job = new WorkerFakeJob;
+        $job->resolvedJob = $handler;
+
+        $worker->currentJob = $job;
+
+        $this->timeOutJob($worker, $job);
+
+        $this->assertSame(SIGALRM, $interruptible->receivedSignal);
+    }
+
+    #[RequiresPhpExtension('pcntl')]
+    public function testTimeoutIsStillHandledWhenNotifyingTheJobFails()
+    {
+        $interruptible = new class implements Interruptible
+        {
+            public function interrupted(int $signal): void
+            {
+                throw new Exception('Failed to interrupt.');
+            }
+        };
+
+        $handler = Double::for(CallQueuedHandler::class);
+        $handler->expects('getRunningCommand')->returns($interruptible);
+
+        $worker = $this->getWorker('default', ['queue' => []]);
+        $job = new WorkerFakeJob;
+        $job->resolvedJob = $handler;
+
+        $worker->currentJob = $job;
+
+        $this->timeOutJob($worker, $job);
+
+        $this->exceptionHandler->assertReported(fn (Exception $reported) => $reported->getMessage() === 'Failed to interrupt.');
+
+        $this->events->assertDispatchedOnce(JobTimedOut::class);
     }
 
     /**
@@ -836,6 +937,23 @@ class QueueWorkerTest extends TestCase
 
         return $options;
     }
+
+    private function timeOutJob(InsomniacWorker $worker, $job)
+    {
+        Worker::killUsing(fn () => throw new RuntimeException('Killed.'));
+
+        try {
+            $worker->registerTimeoutHandler('default', 'queue', $job, $this->workerOptions(['timeout' => 0]));
+
+            pcntl_signal_get_handler(SIGALRM)(SIGALRM);
+        } catch (RuntimeException) {
+            //
+        } finally {
+            Worker::killUsing(null);
+
+            pcntl_signal(SIGALRM, SIG_DFL);
+        }
+    }
 }
 
 /**
@@ -864,6 +982,11 @@ class InsomniacWorker extends Worker
     public function notifyJobOfSignal(int $signal): void
     {
         parent::notifyJobOfSignal($signal);
+    }
+
+    public function registerTimeoutHandler($connectionName, $queue, $job, WorkerOptions $options)
+    {
+        parent::registerTimeoutHandler($connectionName, $queue, $job, $options);
     }
 
     public function stop($status = 0, $options = null, $reason = null, $connectionName = null, $queue = null)

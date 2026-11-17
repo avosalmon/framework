@@ -188,6 +188,24 @@ class DatabaseEloquentHasManyThroughIntegrationTest extends TestCase
         HasManyThroughTestCountry::first()->posts()->findOrFail(1);
     }
 
+    public function testFindOrNewReturnsTheRelatedModel()
+    {
+        $this->seedData();
+        $this->seedDataExtended();
+        $country = HasManyThroughTestCountry::find(2);
+
+        $post = $country->posts()->findOrNew(5);
+
+        $this->assertTrue($post->exists);
+        $this->assertSame(5, $post->id);
+        $this->assertSame('Example2 title1', $post->title);
+
+        $post = $country->posts()->findOrNew(1);
+
+        $this->assertFalse($post->exists);
+        $this->assertInstanceOf(HasManyThroughTestPost::class, $post);
+    }
+
     public function testFindOrFailWithManyThrowsAnException()
     {
         $this->expectExceptionObject(new ModelNotFoundException('No query results for model [Illuminate\Tests\Database\HasManyThroughTestPost] 1, 2'));
@@ -373,6 +391,24 @@ class DatabaseEloquentHasManyThroughIntegrationTest extends TestCase
         });
     }
 
+    public function testChunkMapReturnsCorrectModels()
+    {
+        $this->seedData();
+        $this->seedDataExtended();
+        $country = HasManyThroughTestCountry::find(2);
+
+        $posts = $country->posts()->chunkMap(fn ($post) => [$post->id, $post->title], 2);
+
+        $this->assertEquals([
+            [3, 'Example1 title1'],
+            [4, 'Example1 title2'],
+            [5, 'Example2 title1'],
+            [6, 'Example2 title2'],
+            [7, 'Example3 title1'],
+            [8, 'Example3 title2'],
+        ], $posts->all());
+    }
+
     public function testChunkById()
     {
         $this->seedData();
@@ -520,6 +556,55 @@ class DatabaseEloquentHasManyThroughIntegrationTest extends TestCase
         $this->assertSame('us', $country->shortname);
         $this->assertSame('A title', $country->posts[0]->title);
         $this->assertCount(2, $country->posts);
+    }
+
+    public function testTouch()
+    {
+        $this->seedData();
+        $country = HasManyThroughTestCountry::first();
+
+        HasManyThroughTestPost::query()->update(['updated_at' => '2000-01-01 00:00:00']);
+        $this->assertSame('2000-01-01 00:00:00', HasManyThroughTestPost::first()->updated_at->format('Y-m-d H:i:s'));
+
+        $country->posts()->touch();
+
+        $this->assertNotSame('2000-01-01 00:00:00', HasManyThroughTestPost::first()->fresh()->updated_at->format('Y-m-d H:i:s'));
+    }
+
+    public function testTouchRespectsIntermediateSoftDeletes()
+    {
+        $this->seedData();
+        $user = HasManyThroughSoftDeletesTestUser::first();
+        $user->delete();
+
+        HasManyThroughTestPost::query()->update(['updated_at' => '2000-01-01 00:00:00']);
+
+        $country = HasManyThroughTestCountrySoftDeletesIntermediate::first();
+        $country->posts()->touch();
+
+        $this->assertSame('2000-01-01 00:00:00', HasManyThroughTestPost::first()->fresh()->updated_at->format('Y-m-d H:i:s'));
+    }
+
+    public function testTouchRespectsWithoutTouching()
+    {
+        $this->seedData();
+        $country = HasManyThroughTestCountry::first();
+
+        HasManyThroughTestPost::query()->update(['updated_at' => '2000-01-01 00:00:00']);
+
+        Eloquent::withoutTouching(function () use ($country) {
+            $country->posts()->touch();
+        });
+
+        $this->assertSame('2000-01-01 00:00:00', HasManyThroughTestPost::first()->fresh()->updated_at->format('Y-m-d H:i:s'));
+    }
+
+    public function testAllRelatedIds()
+    {
+        $this->seedData();
+        $country = HasManyThroughTestCountry::first();
+
+        $this->assertEquals([1, 2], $country->posts()->allRelatedIds()->all());
     }
 
     /**
@@ -770,5 +855,16 @@ class HasManyThroughSoftDeletesTestCountry extends Eloquent
     public function users()
     {
         return $this->hasMany(HasManyThroughSoftDeletesTestUser::class, 'country_id');
+    }
+}
+
+class HasManyThroughTestCountrySoftDeletesIntermediate extends Eloquent
+{
+    protected $table = 'countries';
+    protected $guarded = [];
+
+    public function posts()
+    {
+        return $this->hasManyThrough(HasManyThroughSoftDeletesTestPost::class, HasManyThroughSoftDeletesTestUser::class, 'country_id', 'user_id');
     }
 }

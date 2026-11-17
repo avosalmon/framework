@@ -12,6 +12,7 @@ use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Queue\Job as JobContract;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Events\Dispatcher;
+use Illuminate\Foundation\Bootstrap\HandleExceptions;
 use Illuminate\Foundation\Cloud\Events;
 use Illuminate\Foundation\Cloud\ExceptionReporter;
 use Illuminate\Foundation\CloudBootstrapper as Cloud;
@@ -39,6 +40,7 @@ use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
 use Illuminate\View\ViewException;
+use Laravel\Octane\Events\RequestReceived;
 use Laravel\SerializableClosure\SerializableClosure;
 use LogicException;
 use Orchestra\Testbench\Attributes\WithMigration;
@@ -63,6 +65,8 @@ class ExceptionReportingTest extends TestCase
     protected $serverSettingsToRestore = [];
 
     protected $iniSettingsToRestore = [];
+
+    protected $errorLog = null;
 
     protected $reportedScheduledTaskStreams = null;
 
@@ -89,6 +93,10 @@ class ExceptionReportingTest extends TestCase
     {
         foreach ($this->iniSettingsToRestore as $key => $value) {
             ini_set($key, $value);
+        }
+
+        if ($this->errorLog !== null) {
+            @unlink($this->errorLog);
         }
 
         foreach ($this->serverSettingsToRestore as $key => $value) {
@@ -118,6 +126,7 @@ class ExceptionReportingTest extends TestCase
 
         // This config existing will activate exception reporting
         $_SERVER['LARAVEL_CLOUD_EXCEPTIONS'] = json_encode([]);
+        Cloud::configureExceptions($this->app);
         Cloud::registerExceptionReporting($this->app);
 
         report(new RuntimeException('Whoops!'));
@@ -189,6 +198,61 @@ class ExceptionReportingTest extends TestCase
         $streams[0]->assertWrittenJsonContains([
             'message' => 'Whoops!',
         ]);
+    }
+
+    public function testItDoesNotReportTwiceWhenTheResolvedExceptionHandlerIsWrapped(): void
+    {
+        $streams = $this->fakeEventsStreams();
+
+        unset($this->app[ExceptionHandler::class]);
+        $this->app->singleton(ExceptionHandler::class, Handler::class);
+
+        $this->setupExceptionReporting(['stop' => false]);
+
+        // Mirror a service provider, such as Collision's, that resolves the
+        // handler and then rebinds it as a wrapper forwarding to the original.
+        $inner = $this->app->make(ExceptionHandler::class);
+
+        $this->app->forgetInstance(ExceptionHandler::class);
+        $this->app->singleton(ExceptionHandler::class, fn () => new class($inner) implements ExceptionHandler
+        {
+            public function __construct(protected $inner)
+            {
+            }
+
+            public function reportable($callback)
+            {
+                return $this->inner->reportable($callback);
+            }
+
+            public function report(Throwable $e)
+            {
+                $this->inner->report($e);
+            }
+
+            public function shouldReport(Throwable $e)
+            {
+                return $this->inner->shouldReport($e);
+            }
+
+            public function render($request, Throwable $e)
+            {
+                return $this->inner->render($request, $e);
+            }
+
+            public function renderForConsole($output, Throwable $e)
+            {
+                $this->inner->renderForConsole($output, $e);
+            }
+        });
+
+        $this->app->make(ExceptionHandler::class);
+
+        report(new RuntimeException('Whoops!'));
+
+        $writes = $streams->flatMap(fn ($stream) => array_filter(explode("\n", $stream->stream)));
+
+        $this->assertCount(1, $writes);
     }
 
     public function testItIgnoresExceptionHandlersThatCannotRegisterReportables(): void
@@ -711,6 +775,7 @@ class ExceptionReportingTest extends TestCase
             $this->assertSame([
                 'avatar' => [
                     'originalName' => 'avatar.png',
+                    'mimeType' => 'image/png',
                     'size' => 12288,
                     'error' => 0,
                 ],
@@ -935,6 +1000,30 @@ class ExceptionReportingTest extends TestCase
         $this->assertCount(1, $streams);
     }
 
+    public function testItResolvesTheBladeMapperForEachViewExceptionReported(): void
+    {
+        $this->setupExceptionReporting();
+        $streams = $this->fakeEventsStreams();
+        $resolved = 0;
+
+        $reporter = new ExceptionReporter(
+            $this->app[Events::class],
+            function () use (&$resolved) {
+                $resolved++;
+
+                return $this->app[BladeMapper::class];
+            },
+            $this->app->basePath().DIRECTORY_SEPARATOR,
+            ['stop' => true],
+        );
+
+        $reporter(new ViewException('Whoops!', previous: new RuntimeException('The first!')));
+        $reporter(new ViewException('Whoops!', previous: new RuntimeException('The second!')));
+
+        $this->assertSame(2, $resolved);
+        $this->assertCount(1, $streams);
+    }
+
     public function testItNormalizesViewExceptions(): void
     {
         $this->setupExceptionReporting();
@@ -948,7 +1037,7 @@ class ExceptionReportingTest extends TestCase
             report($e);
         }
 
-        $compiledComponent = $this->reportedCompiledViewPath(__DIR__.'/components/profile.blade.php');
+        $compiledComponent = $this->reportedCompiledViewPath(realpath(__DIR__.'/components').'/profile.blade.php');
         $compiledView = $this->reportedCompiledViewPath(__DIR__.'/foo.blade.php');
 
         $this->assertCount(1, $streams);
@@ -984,6 +1073,37 @@ class ExceptionReportingTest extends TestCase
             unset($reportedInView['trace'][0], $thrownInView['trace'][0], $thrownInView['trace'][9], $reportedInView['trace'][9]);
 
             $this->assertSame($reportedInView['trace'], $thrownInView['trace']);
+
+            return true;
+        });
+    }
+
+    public function testItNormalizesViewExceptionsFromEachViewTheProcessRenders(): void
+    {
+        $this->setupExceptionReporting();
+        $streams = $this->fakeEventsStreams();
+
+        foreach (['reentrancy.blade.php', 'components/profile.blade.php'] as $view) {
+            try {
+                view()->file(__DIR__.'/'.$view)->render();
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
+
+        $this->assertCount(1, $streams);
+        $streams[0]->assertWritten(function (string $stream) {
+            [
+                $thrownInFirstView,
+                $reportedInSecondView,
+                $thrownInSecondView,
+            ] = array_map(
+                fn ($payload) => json_decode($payload, associative: true, flags: JSON_THROW_ON_ERROR),
+                explode("\n", trim($stream)),
+            );
+
+            $this->assertSame('tests/Foundation/Cloud/reentrancy.blade.php', $thrownInFirstView['trace'][0]['file']);
+            $this->assertSame('tests/Foundation/Cloud/components/profile.blade.php', $thrownInSecondView['trace'][0]['file']);
 
             return true;
         });
@@ -1388,6 +1508,9 @@ class ExceptionReportingTest extends TestCase
         // captured when the job was dispatched.
         ExceptionReportingJobThatReportsException::dispatch(function () {
             Auth::setUser(new GenericUser(['id' => 'abc123', 'remember_token' => '']));
+
+            report(new RuntimeException('While logged in!'));
+
             Auth::logout();
         });
         ExceptionReportingJobThatReportsException::dispatch(fn () => true);
@@ -1403,8 +1526,54 @@ class ExceptionReportingTest extends TestCase
         // The reporter writes to the socket it has already opened, so each
         // report within the worker is another write to the same stream.
         $this->assertCount(1, $streams);
-        $streams[0]->assertWrittenJsonContains(['user_id' => null, 'message' => 'Whoops!'], write: 0);
+        $streams[0]->assertWrittenJsonContains(['user_id' => 'abc123', 'message' => 'While logged in!'], write: 0);
         $streams[0]->assertWrittenJsonContains(['user_id' => null, 'message' => 'Whoops!'], write: 1);
+        $streams[0]->assertWrittenJsonContains(['user_id' => null, 'message' => 'Whoops!'], write: 2);
+    }
+
+    public function testItDoesNotRememberTheUserWhenTheyLogOutInAScheduledTask(): void
+    {
+        $this->setupExceptionReporting();
+        $streams = $this->fakeEventsStreams();
+
+        // The scheduler runs every task in the one process, so remembering the
+        // user would attribute them to the rest of the run.
+        $schedule = $this->app->make(Schedule::class);
+
+        $schedule->call(function () {
+            Auth::login(new GenericUser(['id' => 'abc123', 'password' => 'secret', 'remember_token' => '']));
+
+            report(new RuntimeException('While logged in!'));
+
+            Auth::logout();
+
+            report(new RuntimeException('Whoops!'));
+        })->name('first-task')->everyMinute();
+
+        $schedule->call(fn () => report(new RuntimeException('Whoops!')))
+            ->name('second-task')
+            ->everyMinute();
+
+        $this->runArtisanCommand(['artisan', 'schedule:run']);
+
+        // The reporter writes to the socket it has already opened, so each
+        // report within the run is another write to the same stream.
+        $this->assertCount(1, $streams);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'execution_type' => 'scheduled_task',
+            'message' => 'While logged in!',
+        ], write: 0);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => null,
+            'execution_type' => 'scheduled_task',
+            'message' => 'Whoops!',
+        ], write: 1);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => null,
+            'execution_type' => 'scheduled_task',
+            'message' => 'Whoops!',
+        ], write: 2);
     }
 
     public function testItDoesNotCauseRecursionWhenRetrievingUserId(): void
@@ -1940,6 +2109,38 @@ class ExceptionReportingTest extends TestCase
                 'http://localhost/',
                 $payload['execution_context']['url'],
             );
+
+            return true;
+        });
+    }
+
+    public function testItCapturesTheTimestampOfTheRequestOctaneReceived(): void
+    {
+        $this->freezeTime();
+        $this->setRunningInConsole(false);
+        $this->setupExceptionReporting();
+        $streams = $this->fakeEventsStreams();
+
+        // Octane workers handle many requests, so the timestamp the process
+        // started with is the time the worker booted.
+        $_SERVER['REQUEST_TIME_FLOAT'] = (float) now()->subHour()->format('U.u');
+
+        Route::get('/test', fn () => throw new RuntimeException('Whoops!'));
+
+        // Octane is not installed, so the event it hands the worker is faked.
+        // The event is dispatched by name, as the fake carries the name of
+        // the event by alias rather than by declaration.
+        if (! class_exists(RequestReceived::class)) {
+            class_alias(FakeOctaneRequestReceived::class, RequestReceived::class);
+        }
+
+        Event::dispatch(RequestReceived::class, new RequestReceived);
+
+        $this->get('/test')->assertServerError();
+
+        $this->assertCount(1, $streams);
+        $streams[0]->assertWrittenJson(function (array $payload) {
+            $this->assertSame(now()->format('Y-m-d H:i:s.u'), $payload['execution_context']['timestamp']);
 
             return true;
         });
@@ -3502,6 +3703,37 @@ class ExceptionReportingTest extends TestCase
         });
     }
 
+    public function testItReservesMemoryForReportingFatalErrors(): void
+    {
+        $this->setupExceptionReporting();
+
+        $this->assertSame(32768, strlen($this->reservedMemory($this->exceptionReporter())));
+    }
+
+    public function testItKeepsTheReservedMemoryWhenReportingOtherExceptions(): void
+    {
+        $this->setupExceptionReporting();
+        $this->fakeEventsStreams();
+        $reporter = $this->exceptionReporter();
+
+        HandleExceptions::$reservedMemory = null;
+        $reporter(new RuntimeException('Whoops!'));
+
+        $this->assertSame(32768, strlen($this->reservedMemory($reporter)));
+    }
+
+    public function testItReleasesTheReservedMemoryWhenReportingFatalErrors(): void
+    {
+        $this->setupExceptionReporting();
+        $this->fakeEventsStreams();
+        $reporter = $this->exceptionReporter();
+
+        HandleExceptions::$reservedMemory = str_repeat('x', 32768);
+        $reporter(new FatalError('Out of memory', 0, ['file' => __FILE__, 'line' => __LINE__], 0));
+
+        $this->assertNull($this->reservedMemory($reporter));
+    }
+
     public function testItAppendsTheExceptionFileAndLineAsTheFirstFrameInTheTrace(): void
     {
         $this->setupExceptionReporting();
@@ -3536,7 +3768,7 @@ class ExceptionReportingTest extends TestCase
         // runs on, so that a file is the same file everywhere.
         $reporter = new ExceptionReporter(
             $this->app[Events::class],
-            $this->app[BladeMapper::class],
+            fn () => $this->app[BladeMapper::class],
             'D:\\a\\framework\\framework\\',
             ['stop' => true],
         );
@@ -3734,7 +3966,7 @@ class ExceptionReportingTest extends TestCase
 
         $reporter = new ExceptionReporter(
             $this->app[Events::class],
-            $this->app[BladeMapper::class],
+            fn () => $this->app[BladeMapper::class],
             $this->app->basePath().DIRECTORY_SEPARATOR,
             [
                 'stop' => $stopConfig,
@@ -3758,10 +3990,11 @@ class ExceptionReportingTest extends TestCase
         $this->setupExceptionReporting();
         $this->fakeEventsStreams();
         Events::$socketFactory = fn () => false;
+        $this->captureErrorLog();
 
         $reporter = new ExceptionReporter(
             $this->app[Events::class],
-            $this->app[BladeMapper::class],
+            fn () => $this->app[BladeMapper::class],
             $this->app->basePath().DIRECTORY_SEPARATOR,
             [
                 'stop' => false,
@@ -3781,6 +4014,7 @@ class ExceptionReportingTest extends TestCase
         Events::$socketFactory = function () {
             return false;
         };
+        $this->captureErrorLog();
         $reportableCalled = false;
         Exceptions::reportable(function (Throwable $e) use (&$reportableCalled) {
             $reportableCalled = true;
@@ -3790,6 +4024,23 @@ class ExceptionReportingTest extends TestCase
 
         $this->assertCount(0, $streams);
         $this->assertTrue($reportableCalled);
+    }
+
+    public function testItLogsEventsThatCannotBeEmitted(): void
+    {
+        $log = $this->captureErrorLog();
+        Events::$socketFactory = fn (...$arguments) => fopen('php://memory', 'r+');
+
+        $this->assertFalse((new Events('unix:///cloud.sock'))->emitMany([['a' => 1], ['b' => 2]]));
+
+        $lines = file($log, FILE_IGNORE_NEW_LINES);
+        $this->assertCount(1, $lines);
+        $this->assertStringContainsString('Laravel Cloud: EVENTS_DROPPED {', $lines[0]);
+        $this->assertSame([
+            'events' => 2,
+            'exception' => RuntimeException::class,
+            'message' => "Failed configuring socket timeout\n---\nclosed: true",
+        ], json_decode(explode('Laravel Cloud: EVENTS_DROPPED ', $lines[0], 2)[1], associative: true));
     }
 
     public function testItDoesNotCaptureSyncJobContext(): void
@@ -3938,7 +4189,7 @@ class ExceptionReportingTest extends TestCase
     {
         return new ExceptionReporter(
             $this->app[Events::class],
-            $this->app[BladeMapper::class],
+            fn () => $this->app[BladeMapper::class],
             $this->app->basePath().DIRECTORY_SEPARATOR,
             [
                 'stop' => true,
@@ -4018,8 +4269,21 @@ class ExceptionReportingTest extends TestCase
     {
         $_SERVER['LARAVEL_CLOUD'] = '1';
         $_SERVER['LARAVEL_CLOUD_EXCEPTIONS'] = json_encode($config);
+        Cloud::configureExceptions($this->app);
         Cloud::registerEvents($this->app);
         Cloud::registerExceptionReporting($this->app);
+    }
+
+    /**
+     * Write the "error_log" output to a temporary file and return its path.
+     */
+    protected function captureErrorLog(): string
+    {
+        $this->iniSettingsToRestore['error_log'] ??= ini_get('error_log');
+
+        ini_set('error_log', $this->errorLog = tempnam(sys_get_temp_dir(), 'cloud-error-log'));
+
+        return $this->errorLog;
     }
 
     /**
@@ -4056,6 +4320,11 @@ class ExceptionReportingTest extends TestCase
     protected function reportedCommandLine(string $command): ?string
     {
         return interface_exists(RawInputInterface::class) ? $command : null;
+    }
+
+    protected function reservedMemory(ExceptionReporter $reporter): ?string
+    {
+        return (fn () => $this->reservedMemory)->call($reporter);
     }
 
     protected function setRunningInConsole(bool $runningInConsole): void
@@ -4257,6 +4526,11 @@ class ExceptionThrownOnWindows extends RuntimeException
         $this->file = 'D:\\a\\framework\\framework\\tests\\Foundation\\Cloud\\Whoops.php';
         $this->line = 1;
     }
+}
+
+class FakeOctaneRequestReceived
+{
+    //
 }
 
 class HeaderBagThatThrows extends HeaderBag
