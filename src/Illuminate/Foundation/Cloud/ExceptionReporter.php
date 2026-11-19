@@ -9,6 +9,7 @@ use Illuminate\Console\Scheduling\CallbackEvent as CallbackTask;
 use Illuminate\Console\Scheduling\Event as ScheduledTask;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Queue\Job;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Bootstrap\HandleExceptions;
 use Illuminate\Foundation\Exceptions\Renderer\Mappers\BladeMapper;
 use Illuminate\Log\Context\Repository as ContextRepository;
@@ -143,6 +144,8 @@ class ExceptionReporter
      *    redact_request_payload_fields: list<string>,
      *    redact_headers: list<string>,
      *    redact_command_input_fields: list<string>,
+     *    user_name_attribute?: string,
+     *    user_identity_attribute?: string,
      * }  $config
      */
     public function __construct(
@@ -235,7 +238,7 @@ class ExceptionReporter
             'exception_context' => $this->exceptionContext($e),
             'laravel_context' => $this->laravelContext(),
             ...$this->executionDetails($e),
-            'user_id' => $this->userId(),
+            ...$this->userPayload(),
             'handled' => $this->handled($e),
             ...$this->parseException($e),
             'previous' => $this->previous($e),
@@ -1108,13 +1111,52 @@ class ExceptionReporter
     }
 
     /**
-     * Retrieve the current user ID.
+     * Retrieve the authenticated user's identifier and details.
+     *
+     * The user is read once so capturing their details does not retrieve them again.
+     *
+     * @return array{user_id: ?string, user_details: ?object}
      */
-    protected function userId(): ?string
+    protected function userPayload(): array
+    {
+        $user = $this->authenticatedUser();
+
+        return [
+            'user_id' => $this->userId($user),
+            'user_details' => $this->userDetails($user),
+        ];
+    }
+
+    /**
+     * Retrieve the authenticated user, without resolving a guard that has not been resolved.
+     */
+    protected function authenticatedUser(): ?Authenticatable
     {
         try {
-            if (Auth::hasResolvedGuards() && Auth::hasUser()) {
-                return $this->userIdentifier(Auth::user());
+            if (! Auth::hasResolvedGuards() || ! Auth::hasUser()) {
+                return null;
+            }
+
+            $user = Auth::user();
+
+            return $user instanceof Authenticatable ? $user : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Retrieve the current user ID.
+     */
+    protected function userId(?Authenticatable $user = null): ?string
+    {
+        try {
+            if ($user === null && Auth::hasResolvedGuards() && Auth::hasUser()) {
+                $user = Auth::user();
+            }
+
+            if ($user instanceof Authenticatable) {
+                return $this->userIdentifier($user);
             }
 
             return $this->userIdFromContext();
@@ -1143,6 +1185,79 @@ class ExceptionReporter
         return $user->getAuthIdentifier() === null
             ? null
             : (string) $user->getAuthIdentifier();
+    }
+
+    /**
+     * Retrieve the authenticated user's name and identity.
+     */
+    protected function userDetails(?Authenticatable $user): ?object
+    {
+        if ($user === null) {
+            return null;
+        }
+
+        $details = array_filter([
+            'name' => $this->userAttribute($user, $this->configuredUserAttribute('user_name_attribute', 'name')),
+            'identity' => $this->userAttribute($user, $this->configuredUserAttribute('user_identity_attribute', 'email')),
+        ], fn ($value) => $value !== null);
+
+        return $details === [] ? null : (object) $details;
+    }
+
+    /**
+     * Retrieve the configured user attribute name.
+     */
+    protected function configuredUserAttribute(string $key, string $default): string
+    {
+        $attribute = $this->config[$key] ?? null;
+
+        if (! is_string($attribute)) {
+            return $default;
+        }
+
+        $attribute = trim($attribute);
+
+        return $attribute === '' ? $default : $attribute;
+    }
+
+    /**
+     * Retrieve a scalar attribute from the user, when it exists.
+     */
+    protected function userAttribute(Authenticatable $user, string $attribute): ?string
+    {
+        try {
+            if (! $this->userHasAttribute($user, $attribute)) {
+                return null;
+            }
+
+            $value = $user instanceof Model
+                ? $user->getAttribute($attribute)
+                : $user->{$attribute};
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (! is_scalar($value)) {
+            return null;
+        }
+
+        $value = (string) $value;
+
+        return trim($value) === '' ? null : $value;
+    }
+
+    /**
+     * Determine if the user has the given attribute.
+     */
+    protected function userHasAttribute(Authenticatable $user, string $attribute): bool
+    {
+        if ($user instanceof Model) {
+            return array_key_exists($attribute, $user->getAttributes())
+                || $user->hasGetMutator($attribute)
+                || $user->hasAttributeGetMutator($attribute);
+        }
+
+        return isset($user->{$attribute});
     }
 
     /**

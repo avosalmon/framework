@@ -11,6 +11,8 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Contracts\Queue\Job as JobContract;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Events\Dispatcher;
 use Illuminate\Foundation\Bootstrap\HandleExceptions;
 use Illuminate\Foundation\Cloud\Events;
@@ -319,6 +321,7 @@ class ExceptionReportingTest extends TestCase
                     'files' => null,
                 ],
                 'user_id' => null,
+                'user_details' => null,
                 'handled' => true,
                 'class' => 'RuntimeException',
                 'code' => '54',
@@ -1421,6 +1424,233 @@ class ExceptionReportingTest extends TestCase
         $this->assertCount(1, $streams);
         $streams[0]->assertWrittenJsonContains([
             'user_id' => 'abc123',
+            'user_details' => null,
+        ]);
+    }
+
+    public function testItCapturesTheAuthenticatedUsersNameAndIdentity(): void
+    {
+        $this->setupExceptionReporting();
+        $streams = $this->fakeEventsStreams();
+
+        Auth::setUser(new ExceptionReportingUser([
+            'id' => 'abc123',
+            'name' => 'Ada Lovelace',
+            'email' => 'ada@example.com',
+        ]));
+
+        report(new RuntimeException('Whoops!'));
+
+        $this->assertCount(1, $streams);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => [
+                'name' => 'Ada Lovelace',
+                'identity' => 'ada@example.com',
+            ],
+        ]);
+    }
+
+    public function testItCapturesUserDetailsFromTheConfiguredAttributes(): void
+    {
+        $this->setupExceptionReporting([
+            'user_name_attribute' => 'full_name',
+            'user_identity_attribute' => 'username',
+        ]);
+        $streams = $this->fakeEventsStreams();
+
+        Auth::setUser(new ExceptionReportingUser([
+            'id' => 'abc123',
+            'name' => 'Not this name',
+            'email' => 'not@this.test',
+            'full_name' => 'Ada Lovelace',
+            'username' => 'ada',
+        ]));
+
+        report(new RuntimeException('Whoops!'));
+
+        $this->assertCount(1, $streams);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => [
+                'name' => 'Ada Lovelace',
+                'identity' => 'ada',
+            ],
+        ]);
+    }
+
+    public function testItUsesTheDefaultUserDetailAttributesWhenTheConfigIsBlank(): void
+    {
+        $this->setupExceptionReporting([
+            'user_name_attribute' => ' ',
+            'user_identity_attribute' => '',
+        ]);
+        $streams = $this->fakeEventsStreams();
+
+        Auth::setUser(new GenericUser([
+            'id' => 'abc123',
+            'name' => 'Grace Hopper',
+            'email' => 'grace@example.com',
+            'username' => 'grace',
+        ]));
+
+        report(new RuntimeException('Whoops!'));
+
+        $this->assertCount(1, $streams);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => [
+                'name' => 'Grace Hopper',
+                'identity' => 'grace@example.com',
+            ],
+        ]);
+    }
+
+    public function testItStringifiesScalarUserDetails(): void
+    {
+        $this->setupExceptionReporting();
+        $streams = $this->fakeEventsStreams();
+
+        Auth::setUser(new ExceptionReportingUser([
+            'id' => 7,
+            'name' => 0,
+            'email' => 42,
+        ]));
+
+        report(new RuntimeException('Whoops!'));
+
+        $this->assertCount(1, $streams);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => '7',
+            'user_details' => [
+                'name' => '0',
+                'identity' => '42',
+            ],
+        ]);
+    }
+
+    public function testItOmitsBlankAndNonScalarUserDetails(): void
+    {
+        $this->setupExceptionReporting();
+        $streams = $this->fakeEventsStreams();
+
+        Auth::setUser(new ExceptionReportingUser([
+            'id' => 'abc123',
+            'name' => '   ',
+            'email' => '',
+        ]));
+
+        report(new RuntimeException('Whoops!'));
+
+        Auth::setUser(new ExceptionReportingUser([
+            'id' => 'abc123',
+            'name' => ['Ada', 'Lovelace'],
+            'email' => 'ada@example.com',
+        ]));
+
+        report(new RuntimeException('Whoops!'));
+
+        Auth::setUser(new ExceptionReportingUser([
+            'id' => 'abc123',
+            'name' => new stdClass,
+            'email' => null,
+        ]));
+
+        report(new RuntimeException('Whoops!'));
+
+        $this->assertCount(1, $streams);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => null,
+        ], write: 0);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => [
+                'identity' => 'ada@example.com',
+            ],
+        ], write: 1);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => null,
+        ], write: 2);
+    }
+
+    public function testItReadsOnlyUserAttributesThatExist(): void
+    {
+        Model::preventAccessingMissingAttributes(true);
+
+        try {
+            $this->setupExceptionReporting([
+                'user_identity_attribute' => 'profile',
+            ]);
+            $streams = $this->fakeEventsStreams();
+
+            $user = new ExceptionReportingUserWithProfileRelation([
+                'id' => 'abc123',
+                'name' => 'Ada Lovelace',
+            ]);
+            $user->exists = true;
+
+            Auth::setUser($user);
+
+            report(new RuntimeException('Whoops!'));
+
+            $this->assertFalse($user->profileWasLoaded);
+            $this->assertCount(1, $streams);
+            $streams[0]->assertWrittenJsonContains([
+                'user_id' => 'abc123',
+                'user_details' => [
+                    'name' => 'Ada Lovelace',
+                ],
+            ]);
+        } finally {
+            Model::preventAccessingMissingAttributes(false);
+        }
+    }
+
+    public function testItReadsComputedUserDetailAttributes(): void
+    {
+        $this->setupExceptionReporting();
+        $streams = $this->fakeEventsStreams();
+
+        Auth::setUser(new ExceptionReportingUserWithNameAttribute([
+            'id' => 'abc123',
+            'email' => 'grace@example.com',
+        ]));
+
+        report(new RuntimeException('Whoops!'));
+
+        $this->assertCount(1, $streams);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => [
+                'name' => 'Grace Hopper',
+                'identity' => 'grace@example.com',
+            ],
+        ]);
+    }
+
+    public function testItSkipsUserDetailAccessorsThatThrow(): void
+    {
+        $this->setupExceptionReporting();
+        $streams = $this->fakeEventsStreams();
+
+        Auth::setUser(new ExceptionReportingUserWithThrowingNameAccessor([
+            'id' => 'abc123',
+            'name' => 'Ada Lovelace',
+            'email' => 'ada@example.com',
+        ]));
+
+        report(new RuntimeException('Whoops!'));
+
+        $this->assertCount(1, $streams);
+        $this->assertCount(1, array_filter(explode("\n", $streams[0]->stream)));
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => [
+                'identity' => 'ada@example.com',
+            ],
+            'message' => 'Whoops!',
         ]);
     }
 
@@ -3686,6 +3916,7 @@ class ExceptionReportingTest extends TestCase
                     'files' => null,
                 ],
                 'user_id' => null,
+                'user_details' => null,
                 'handled' => false,
                 'class' => "Symfony\Component\ErrorHandler\Error\FatalError",
                 'code' => '0',
@@ -3864,11 +4095,14 @@ class ExceptionReportingTest extends TestCase
 
         (function ($anonymousArgOne, $anonymousArgTwo) {
             report(new RuntimeException('Whoops!'));
-        })(new class {
+        })(new class
+        {
             //
-        }, new class extends stdClass {
+        }, new class extends stdClass
+        {
             //
-        }, new class extends Arr {
+        }, new class extends Arr
+        {
             //
         });
 
@@ -3893,7 +4127,8 @@ class ExceptionReportingTest extends TestCase
         $this->setupExceptionReporting();
         $streams = $this->fakeEventsStreams();
 
-        report(new class('Whoops!') extends RuntimeException {
+        report(new class('Whoops!') extends RuntimeException
+        {
             //
         });
 
@@ -4117,6 +4352,7 @@ class ExceptionReportingTest extends TestCase
                     'files' => null,
                 ],
                 'user_id' => null,
+                'user_details' => null,
                 'handled' => false,
                 'class' => 'RuntimeException',
                 'code' => '54',
@@ -4636,6 +4872,47 @@ class GuardThatCountsUserRetrievals implements \Illuminate\Contracts\Auth\Guard
     public function validate(array $credentials = [])
     {
         return true;
+    }
+}
+
+class ExceptionReportingUser extends Model implements \Illuminate\Contracts\Auth\Authenticatable
+{
+    use \Illuminate\Auth\Authenticatable;
+
+    protected $guarded = [];
+
+    protected $keyType = 'string';
+
+    public $incrementing = false;
+
+    public $timestamps = false;
+}
+
+class ExceptionReportingUserWithNameAttribute extends ExceptionReportingUser
+{
+    protected function name(): Attribute
+    {
+        return Attribute::get(fn () => 'Grace Hopper');
+    }
+}
+
+class ExceptionReportingUserWithThrowingNameAccessor extends ExceptionReportingUser
+{
+    public function getNameAttribute($value)
+    {
+        throw new RuntimeException('The name accessor failed.');
+    }
+}
+
+class ExceptionReportingUserWithProfileRelation extends ExceptionReportingUser
+{
+    public bool $profileWasLoaded = false;
+
+    public function profile()
+    {
+        $this->profileWasLoaded = true;
+
+        throw new RuntimeException('The relation was loaded.');
     }
 }
 

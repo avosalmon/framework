@@ -355,6 +355,8 @@ class CloudBootstrapper
                 'redact_request_payload_fields' => ['_token', 'password', 'password_confirmation', 'current_password'],
                 'redact_headers' => ['Authorization', 'Cookie', 'Proxy-Authorization', 'X-CSRF-TOKEN', 'X-XSRF-TOKEN'],
                 'redact_command_input_fields' => ['token', 'password', 'key', 'secret'],
+                'user_name_attribute' => 'name',
+                'user_identity_attribute' => 'email',
                 ...$config,
             ];
 
