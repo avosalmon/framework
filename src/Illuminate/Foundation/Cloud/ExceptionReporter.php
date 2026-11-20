@@ -29,6 +29,7 @@ use ReflectionClass;
 use ReflectionFunction;
 use RuntimeException;
 use Spatie\LaravelIgnition\Exceptions\ViewException as IgnitionViewException;
+use stdClass;
 use Symfony\Component\Console\Exception\CommandNotFoundException;
 use Symfony\Component\Console\Input\ArgvInput;
 use Symfony\Component\Console\Input\Input as ConsoleInput;
@@ -1070,6 +1071,7 @@ class ExceptionReporter
         // The context is scoped to the current request, so the user is not remembered in later requests...
         try {
             Context::addHidden('laravel_cloud_user_id', $this->userIdentifier($user));
+            Context::addHidden('laravel_cloud_user_details', $this->userDetails($user));
         } catch (Throwable) {
             //
         }
@@ -1080,17 +1082,20 @@ class ExceptionReporter
      */
     public function handleContextDehydrating(ContextRepository $context): void
     {
-        $this->rememberUserIdInContext($context);
+        $this->rememberUserInContext($context);
         $this->rememberTraceIdInContext($context);
     }
 
     /**
-     * Capture the authenticated user's identifier in the given context.
+     * Capture the authenticated user's identifier, name, and identity in the given context.
      */
-    protected function rememberUserIdInContext(ContextRepository $context): void
+    protected function rememberUserInContext(ContextRepository $context): void
     {
         try {
-            $context->addHidden('laravel_cloud_user_id', $this->userId());
+            $user = $this->authenticatedUser();
+
+            $context->addHidden('laravel_cloud_user_id', $user instanceof Authenticatable ? $this->userId($user) : $this->userId());
+            $context->addHidden('laravel_cloud_user_details', $user instanceof Authenticatable ? $this->userDetails($user) : $this->userDetailsFromContext());
         } catch (Throwable) {
             //
         }
@@ -1120,6 +1125,13 @@ class ExceptionReporter
     protected function userPayload(): array
     {
         $user = $this->authenticatedUser();
+
+        if (! $user instanceof Authenticatable) {
+            return [
+                'user_id' => $this->userIdFromContext(),
+                'user_details' => $this->userDetailsFromContext(),
+            ];
+        }
 
         return [
             'user_id' => $this->userId($user),
@@ -1190,16 +1202,39 @@ class ExceptionReporter
     /**
      * Retrieve the authenticated user's name and identity.
      */
-    protected function userDetails(?Authenticatable $user): ?object
+    protected function userDetails(Authenticatable $user): ?object
     {
-        if ($user === null) {
-            return null;
-        }
-
         $details = array_filter([
             'name' => $this->userAttribute($user, $this->configuredUserAttribute('user_name_attribute', 'name')),
             'identity' => $this->userAttribute($user, $this->configuredUserAttribute('user_identity_attribute', 'email')),
         ], fn ($value) => $value !== null);
+
+        return $details === [] ? null : (object) $details;
+    }
+
+    /**
+     * Retrieve the authenticated user's name and identity from the context.
+     */
+    protected function userDetailsFromContext(): ?object
+    {
+        try {
+            $details = Context::getHidden('laravel_cloud_user_details');
+        } catch (Throwable) {
+            return null;
+        }
+
+        if ($details instanceof stdClass) {
+            $details = (array) $details;
+        }
+
+        if (! is_array($details)) {
+            return null;
+        }
+
+        $details = array_filter([
+            'name' => is_string($details['name'] ?? null) ? $details['name'] : null,
+            'identity' => is_string($details['identity'] ?? null) ? $details['identity'] : null,
+        ], fn ($value) => $value !== null && trim($value) !== '');
 
         return $details === [] ? null : (object) $details;
     }

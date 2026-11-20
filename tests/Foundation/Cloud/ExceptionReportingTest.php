@@ -1684,14 +1684,26 @@ class ExceptionReportingTest extends TestCase
             throw new RuntimeException('Whoops!');
         });
 
-        $this->actingAs(new GenericUser(['id' => 'abc123', 'remember_token' => '']))
+        $this->actingAs(new GenericUser([
+            'id' => 'abc123',
+            'name' => 'Ada Lovelace',
+            'email' => 'ada@example.com',
+            'remember_token' => '',
+        ]))
             ->get('/test')
             ->assertServerError();
 
         // The user is no longer authenticated, but the exception is still
         // theirs, so the user they were is reported.
         $this->assertCount(1, $streams);
-        $streams[0]->assertWrittenJsonContains(['user_id' => 'abc123', 'message' => 'Whoops!']);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => [
+                'name' => 'Ada Lovelace',
+                'identity' => 'ada@example.com',
+            ],
+            'message' => 'Whoops!',
+        ]);
     }
 
     public function testItDoesNotRememberTheUserThatLoggedOutInLaterRequests(): void
@@ -1883,6 +1895,10 @@ class ExceptionReportingTest extends TestCase
         $streams = $this->fakeEventsStreams();
 
         Context::addHidden('laravel_cloud_user_id', 'abc123');
+        Context::addHidden('laravel_cloud_user_details', (object) [
+            'name' => 'Ada Lovelace',
+            'identity' => 'ada@example.com',
+        ]);
 
         Route::get('/test', function () {
             report(new RuntimeException('Whoops before the guards are resolved!'));
@@ -1899,10 +1915,18 @@ class ExceptionReportingTest extends TestCase
         $this->assertCount(1, $streams);
         $streams[0]->assertWrittenJsonContains([
             'user_id' => 'abc123',
+            'user_details' => [
+                'name' => 'Ada Lovelace',
+                'identity' => 'ada@example.com',
+            ],
             'message' => 'Whoops before the guards are resolved!',
         ], write: 0);
         $streams[0]->assertWrittenJsonContains([
             'user_id' => 'abc123',
+            'user_details' => [
+                'name' => 'Ada Lovelace',
+                'identity' => 'ada@example.com',
+            ],
             'message' => 'Whoops after the guards are resolved!',
         ], write: 1);
     }
@@ -1919,9 +1943,18 @@ class ExceptionReportingTest extends TestCase
             return 'ok';
         });
 
-        $this->actingAs(new GenericUser(['id' => 'abc123']))->get('/test')->assertOk();
+        $this->actingAs(new GenericUser([
+            'id' => 'abc123',
+            'name' => 'Ada Lovelace',
+            'email' => 'ada@example.com',
+        ]))->get('/test')->assertOk();
 
-        $this->assertSame('abc123', $this->userIdInJobPayload(DB::table('jobs')->soleValue('payload')));
+        $payload = DB::table('jobs')->soleValue('payload');
+        $this->assertSame('abc123', $this->userIdInJobPayload($payload));
+        $this->assertSame([
+            'name' => 'Ada Lovelace',
+            'identity' => 'ada@example.com',
+        ], $this->userDetailsInJobPayload($payload));
     }
 
     public function testItDoesNotAddTheUserIdToTheContextForJobsDispatchedBeforeTheUserLogsIn(): void
@@ -1963,13 +1996,24 @@ class ExceptionReportingTest extends TestCase
             return 'ok';
         });
 
-        $this->actingAs(new GenericUser(['id' => 'abc123', 'password' => 'secret', 'remember_token' => '']))
+        $this->actingAs(new GenericUser([
+            'id' => 'abc123',
+            'name' => 'Ada Lovelace',
+            'email' => 'ada@example.com',
+            'password' => 'secret',
+            'remember_token' => '',
+        ]))
             ->get('/test')
             ->assertOk();
 
         // The request was performed by the user, so the jobs it dispatched
         // belong to them as well.
-        $this->assertSame('abc123', $this->userIdInJobPayload(DB::table('jobs')->soleValue('payload')));
+        $payload = DB::table('jobs')->soleValue('payload');
+        $this->assertSame('abc123', $this->userIdInJobPayload($payload));
+        $this->assertSame([
+            'name' => 'Ada Lovelace',
+            'identity' => 'ada@example.com',
+        ], $this->userDetailsInJobPayload($payload));
     }
 
     public function testItPreservesTheUserIdInTheContextWhenJobsDispatchJobs(): void
@@ -1979,6 +2023,10 @@ class ExceptionReportingTest extends TestCase
         Config::set('queue.default', 'database');
 
         Context::addHidden('laravel_cloud_user_id', 'abc123');
+        Context::addHidden('laravel_cloud_user_details', (object) [
+            'name' => 'Ada Lovelace',
+            'identity' => 'ada@example.com',
+        ]);
         ExceptionReportingJobThatReportsException::dispatch(
             fn () => ExceptionReportingJobThatReportsException::dispatch(fn () => true)
         );
@@ -1993,7 +2041,12 @@ class ExceptionReportingTest extends TestCase
 
         // The job the worker dispatched belongs to the user the original job
         // was dispatched by.
-        $this->assertSame('abc123', $this->userIdInJobPayload(DB::table('jobs')->soleValue('payload')));
+        $payload = DB::table('jobs')->soleValue('payload');
+        $this->assertSame('abc123', $this->userIdInJobPayload($payload));
+        $this->assertSame([
+            'name' => 'Ada Lovelace',
+            'identity' => 'ada@example.com',
+        ], $this->userDetailsInJobPayload($payload));
     }
 
     public function testItCapturesTheDispatchingUserIdWhenAUserLogsOutDuringAJob(): void
@@ -2005,8 +2058,17 @@ class ExceptionReportingTest extends TestCase
         // A job belongs to the user that dispatched it, rather than to any
         // user authenticated while handling it.
         Context::addHidden('laravel_cloud_user_id', 'dispatcher');
+        Context::addHidden('laravel_cloud_user_details', (object) [
+            'name' => 'Ada Lovelace',
+            'identity' => 'ada@example.com',
+        ]);
         ExceptionReportingJobThatReportsException::dispatch(function () {
-            Auth::setUser(new GenericUser(['id' => 'impersonated', 'remember_token' => '']));
+            Auth::setUser(new GenericUser([
+                'id' => 'impersonated',
+                'name' => 'Grace Hopper',
+                'email' => 'grace@example.com',
+                'remember_token' => '',
+            ]));
             Auth::logout();
         });
 
@@ -2018,7 +2080,14 @@ class ExceptionReportingTest extends TestCase
             '--tries' => 1,
         ]);
 
-        $streams[0]->assertWrittenJsonContains(['user_id' => 'dispatcher', 'message' => 'Whoops!']);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'dispatcher',
+            'user_details' => [
+                'name' => 'Ada Lovelace',
+                'identity' => 'ada@example.com',
+            ],
+            'message' => 'Whoops!',
+        ]);
     }
 
     public function testItCapturesUserIdInJobsWhenTheUserLogsInDuringTheJob(): void
@@ -2073,7 +2142,13 @@ class ExceptionReportingTest extends TestCase
         Config::set('queue.default', 'database');
 
         Context::addHidden('laravel_cloud_user_id', 'abc123');
+        Context::addHidden('laravel_cloud_user_details', (object) [
+            'name' => 'Ada Lovelace',
+            'identity' => 'ada@example.com',
+        ]);
         ExceptionReportingJobThatReportsException::dispatch(fn () => true);
+
+        Context::flush();
 
         Artisan::call('queue:work', [
             '--max-jobs' => 1,
@@ -2084,7 +2159,14 @@ class ExceptionReportingTest extends TestCase
         ]);
 
         $this->assertCount(1, $streams);
-        $streams[0]->assertWrittenJsonContains(['user_id' => 'abc123', 'message' => 'Whoops!']);
+        $streams[0]->assertWrittenJsonContains([
+            'user_id' => 'abc123',
+            'user_details' => [
+                'name' => 'Ada Lovelace',
+                'identity' => 'ada@example.com',
+            ],
+            'message' => 'Whoops!',
+        ]);
     }
 
     public function testItCapturesTraceIdInRequests(): void
@@ -4400,6 +4482,28 @@ class ExceptionReportingTest extends TestCase
         return isset($context['hidden']['laravel_cloud_user_id'])
             ? unserialize($context['hidden']['laravel_cloud_user_id'])
             : null;
+    }
+
+    /**
+     * Retrieve the user's name and identity captured in the given job payload.
+     *
+     * @return ?array{name?: string, identity?: string}
+     */
+    protected function userDetailsInJobPayload(string $payload): ?array
+    {
+        $context = json_decode($payload, associative: true, flags: JSON_THROW_ON_ERROR)['illuminate:log:context'] ?? [];
+
+        if (! isset($context['hidden']['laravel_cloud_user_details'])) {
+            return null;
+        }
+
+        $details = unserialize($context['hidden']['laravel_cloud_user_details']);
+
+        if ($details instanceof stdClass) {
+            $details = (array) $details;
+        }
+
+        return is_array($details) ? $details : null;
     }
 
     /**
